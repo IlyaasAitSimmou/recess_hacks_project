@@ -47,7 +47,7 @@ export interface FuelEfficiencyData {
 
 // NOTE: It is not recommended to hardcode API keys in client-side code for production.
 const getAIModel = () => {
-  const apiKey = 'AIzaSyC8JNEmloWLWydsvbd4W9rFZZOBu-1IOQU';
+  const apiKey = '';
   if (!apiKey) {
     throw new Error('Google API Key is not set in environment variables.');
   }
