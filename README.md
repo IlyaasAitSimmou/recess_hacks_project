@@ -1,5 +1,7 @@
 # Authentication App - Next.js + Flask
 
+The app is a digital assistant and productivity hub that helps teens learn, organize, and manage their lives more independently, with strong support for both academic and practical life skills.
+
 A full-stack authentication application with Next.js frontend and Flask backend, featuring a comprehensive notes system with AI integration.
 
 ## Features
@@ -11,24 +13,23 @@ A full-stack authentication application with Next.js frontend and Flask backend,
 - **LaTeX Math**: Mathematical equation support
 - **AI Assistant**: Google Gemini-powered chatbot for note analysis
 - **File Attachments**: Image and file upload support
-- **Responsive Design**: Works on desktop and mobile devices
 <img width="770" height="804" alt="Screenshot 2025-08-24 184908" src="https://github.com/user-attachments/assets/2f142ae7-380e-4bdc-be62-11587175f6b2" />
 
 ## Project Structure
 
 ```
 ├── backend/
-│   ├── app.py              # Flask application
-│   ├── requirements.txt    # Python dependencies
-│   └── users.db           # SQLite database (created automatically)
+│   ├── app.py              
+│   ├── requirements.txt    
+│   └── users.db           
 ├── frontend/
 │   ├── app/
-│   │   ├── page.tsx       # Home page
-│   │   ├── login/         # Login page
-│   │   ├── signup/        # Signup page
-│   │   └── dashboard/     # Protected dashboard
+│   │   ├── page.tsx       
+│   │   ├── login/         
+│   │   ├── signup/        
+│   │   └── dashboard/     
 │   └── lib/
-│       └── api.ts         # API client utilities
+│       └── api.ts         
 ```
 
 ## Setup Instructions
@@ -47,7 +48,7 @@ A full-stack authentication application with Next.js frontend and Flask backend,
    pip install -r requirements.txt
    ```
 
-3. **Set up Gemini AI (Optional but recommended)**:
+3. **Set up Gemini AI**:
 
    - Get a free API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
    - Set the environment variable:
@@ -118,18 +119,20 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 
 ## Technology Stack
 
-### Backend
+## Backend
 
-- Flask - Python web framework
+- Flask - Python web framework, connecting to Gemini
 - Flask-CORS - Cross-origin resource sharing
 - PyJWT - JSON Web Token implementation
-- SQLite - Database
+- Supabase - Securely stores all user data, including authentication, notes, budgets, and other records
 - hashlib - Password hashing
+- Nomnitin - Maps API
+- Manim - Math Video Explainer 
 
-### Frontend
+## Frontend
 
-- Next.js 15 - React framework
-- TypeScript - Type safety
+- Next.js 15 - React framework providing a fast, responsive, and modern interface
+- TypeScript / TSX - Type safety for frontend development
 - Tailwind CSS - Styling
 - React Hooks - State management
 
@@ -143,7 +146,6 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 
 ## Development Notes
 
-- The SQLite database is created automatically when the Flask app starts
 - JWT tokens expire after 24 hours
 - Frontend stores tokens in localStorage
 - All API endpoints return JSON responses
