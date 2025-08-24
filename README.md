@@ -117,7 +117,7 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 4. Login with your credentials
 5. Access the protected dashboard
 
-## Technology Stack
+# Technology Stack
 
 ## Backend
 
