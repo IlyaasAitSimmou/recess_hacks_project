@@ -658,6 +658,139 @@ def ai_edit_note(current_user_email, note_id):
     except Exception as e:
         return jsonify({'error': 'Failed to update note'}), 500
 
+@app.route('/api/render-video', methods=['POST'])
+def render_video():
+    """Render a video using Manim - NO FALLBACKS, MANIM MUST WORK"""
+    try:
+        data = request.get_json()
+        manim_code = data.get('manimCode', '')
+        print(f"Received Manim code:\n{manim_code}")
+        file_name = data.get('fileName', 'untitled')
+        topic = data.get('topic', 'Untitled Video')
+        
+        if not manim_code:
+            return jsonify({'error': 'No Manim code provided'}), 400
+        
+        # Clean filename for safety
+        safe_filename = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_filename = safe_filename.replace(' ', '_')
+        
+        # Create videos directory if it doesn't exist
+        videos_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', 'videos')
+        os.makedirs(videos_dir, exist_ok=True)
+        
+        # Create a temporary Python file with the Manim code
+        temp_py_file = os.path.join(videos_dir, f'{safe_filename}_temp.py')
+        
+        with open(temp_py_file, 'w') as f:
+            f.write(manim_code)
+        
+        try:
+            import subprocess
+            import shutil
+            import re
+            
+            # Extract scene class name from the code
+            scene_match = re.search(r'class\s+(\w+)\s*\(.*Scene.*\):', manim_code)
+            scene_name = scene_match.group(1) if scene_match else 'VideoLesson'
+            
+            # Path to Python 3.12 virtual environment
+            venv_python = os.path.join(os.path.dirname(__file__), 'venv312', 'bin', 'python')
+            venv_manim = os.path.join(os.path.dirname(__file__), 'venv312', 'bin', 'manim')
+            
+            # Check if venv manim exists
+            if not os.path.exists(venv_manim):
+                raise Exception(f"Manim not found in virtual environment: {venv_manim}")
+            
+            # Run manim command using the virtual environment
+            cmd = [
+                venv_manim,
+                '-pql',  # preview, quality low, write to file
+                '--media_dir', videos_dir,
+                temp_py_file,
+                scene_name
+            ]
+            
+            print(f"Running Manim command: {' '.join(cmd)}")
+            
+            # Run manim with timeout
+            result = subprocess.run(
+                cmd,
+                timeout=180,  # 3 minute timeout
+                capture_output=True,
+                text=True,
+                cwd=videos_dir
+            )
+            
+            print(f"Manim exit code: {result.returncode}")
+            print(f"Manim stdout: {result.stdout}")
+            print(f"Manim stderr: {result.stderr}")
+            
+            if result.returncode != 0:
+                raise Exception(f"Manim failed with exit code {result.returncode}: {result.stderr}")
+            
+            # Manim succeeded, find the generated video file
+            # Manim typically outputs to: media_dir/videos/scene_file/quality/scene_name.mp4
+            manim_output_dir = os.path.join(videos_dir, 'videos', os.path.splitext(os.path.basename(temp_py_file))[0], '480p15')
+            expected_video = os.path.join(manim_output_dir, f'{scene_name}.mp4')
+            
+            print(f"Looking for video at: {expected_video}")
+            
+            if not os.path.exists(expected_video):
+                # Try alternative output locations
+                alternative_paths = [
+                    os.path.join(videos_dir, 'videos', os.path.splitext(os.path.basename(temp_py_file))[0], '480p15', f'{scene_name}.mp4'),
+                    os.path.join(videos_dir, 'videos', os.path.splitext(os.path.basename(temp_py_file))[0], '720p30', f'{scene_name}.mp4'),
+                    os.path.join(videos_dir, 'videos', os.path.splitext(os.path.basename(temp_py_file))[0], '1080p60', f'{scene_name}.mp4'),
+                ]
+                
+                for alt_path in alternative_paths:
+                    print(f"Checking alternative path: {alt_path}")
+                    if os.path.exists(alt_path):
+                        expected_video = alt_path
+                        break
+                else:
+                    # List what was actually created
+                    if os.path.exists(os.path.join(videos_dir, 'videos')):
+                        print("Contents of videos directory:")
+                        for root, dirs, files in os.walk(os.path.join(videos_dir, 'videos')):
+                            for file in files:
+                                print(f"  {os.path.join(root, file)}")
+                    raise Exception(f"Video file not found. Expected at: {expected_video}")
+            
+            final_video_path = os.path.join(videos_dir, f'{safe_filename}.mp4')
+            
+            # Move the video to our desired location
+            shutil.move(expected_video, final_video_path)
+            
+            # Clean up temporary directories
+            try:
+                shutil.rmtree(os.path.join(videos_dir, 'videos'))
+            except Exception as cleanup_error:
+                print(f"Cleanup warning: {cleanup_error}")
+            
+            print(f"Video successfully created: {final_video_path}")
+            
+            return jsonify({
+                'success': True,
+                'video_path': f'/videos/{safe_filename}.mp4',
+                'message': f'Video "{topic}" rendered successfully with Manim',
+                'method': 'manim'
+            }), 200
+        
+        finally:
+            # Clean up temporary Python file
+            if os.path.exists(temp_py_file):
+                try:
+                    os.remove(temp_py_file)
+                except Exception as cleanup_error:
+                    print(f"Temp file cleanup warning: {cleanup_error}")
+        
+    except Exception as e:
+        error_msg = f'Manim video rendering failed: {str(e)}'
+        print(error_msg)
+        return jsonify({'error': error_msg}), 500
+
 if __name__ == '__main__':
     # Initialize database on startup
     init_db()

@@ -48,6 +48,27 @@ export default function SimpleNotesExplorer({ onSelectNote, onSelectFolder, curr
     onSelectNote(n);
   }
 
+  // New function to handle file upload
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        handleUploadNote(selectedFile.name, content, currentFolderId ?? null);
+      };
+      // You can choose based on file type. readAsText is good for text files.
+      // For PDFs, you'd need a library to parse the text.
+      reader.readAsText(selectedFile);
+    }
+  }
+
+  function handleUploadNote(title: string, content: string, folder_id: number | null) {
+    if (!title.trim()) return;
+    const n = notesStore.createNote(title.trim(), content, folder_id);
+    onSelectNote(n);
+  }
+
   function handleDeleteFolder(id: number) {
     notesStore.deleteFolder(id);
     if (currentFolderId === id) onSelectFolder(null);
@@ -125,6 +146,12 @@ export default function SimpleNotesExplorer({ onSelectNote, onSelectFolder, curr
     <div className="h-full flex flex-col">
       <div className="p-3 border-b bg-white sticky top-0 z-10">
         <div className="space-y-2">
+          <button
+            className="px-2 py-1 text-sm bg-blue-600 text-white rounded"
+            onClick={() => onSelectFolder(null)}
+          >
+            View Root Directory
+          </button>
           <div className="flex gap-2">
             <input
               className="flex-1 border rounded px-2 py-1 text-sm text-black"
@@ -152,6 +179,22 @@ export default function SimpleNotesExplorer({ onSelectNote, onSelectFolder, curr
             >
               + Note
             </button>
+          </div>
+
+          {/* New file upload section */}
+          <div className="flex gap-2 items-center">
+            <input
+              id="file-upload"
+              type="file"
+              className="hidden"
+              accept=".txt,text/plain,.pdf,application/pdf" // Accept text and PDF files              
+              onChange={handleFileSelect}
+            />
+            <label
+              htmlFor="file-upload"
+              className="flex-1 text-center border rounded px-2 py-1 text-sm bg-purple-600 text-white cursor-pointer"
+            >
+              📤 Upload .txt or .pdf File            </label>
           </div>
         </div>
       </div>

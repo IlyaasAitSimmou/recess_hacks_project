@@ -43,18 +43,52 @@ interface Note {
   updated_at: string;
 }
 
+// Finance tracking interfaces
+interface UserProfile {
+  id: string;
+  name: string | null;
+  monthly_budget: number | null;
+  selected_categories: string[] | null;
+  savings_goal: number | null;
+  income_source: string | null;
+  updated_at: string;
+}
+
+interface SpendingEntry {
+  id: string;
+  user_id: string;
+  created_at: string;
+  date: string;
+  category: string;
+  amount: number;
+  description: string | null;
+}
+
+interface Budget {
+  id: string;
+  user_id: string;
+  created_at: string;
+  category: string;
+  budgeted: number;
+  period: string;
+  icon: string | null;
+}
+
 // The custom hook that centralizes all data logic
 export const useSupabaseStore = () => {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // State for Grocery and Volunteer features
+  // State for existing features
   const [groceryItems, setGroceryItems] = useState<GroceryItem[]>([]);
   const [volunteerEntries, setVolunteerEntries] = useState<VolunteerEntry[]>([]);
-  
-  // State for Notes feature
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+
+  // State for finance tracking
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [spendingEntries, setSpendingEntries] = useState<SpendingEntry[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
 
   // Set up auth listener on component mount to fetch user data
   useEffect(() => {
@@ -69,6 +103,9 @@ export const useSupabaseStore = () => {
           setVolunteerEntries([]);
           setFolders([]);
           setNotes([]);
+          setUserProfile(null);
+          setSpendingEntries([]);
+          setBudgets([]);
         }
       }
     );
@@ -79,7 +116,7 @@ export const useSupabaseStore = () => {
   const fetchData = async (userId: string) => {
     setLoading(true);
     
-    // Fetch Grocery items
+    // Fetch existing data (Grocery, Volunteer, Notes)
     const { data: groceryData, error: groceryError } = await supabase
       .from('grocery_items')
       .select('*')
@@ -87,7 +124,6 @@ export const useSupabaseStore = () => {
     if (groceryData) setGroceryItems(groceryData);
     if (groceryError) console.error('Error fetching grocery items:', groceryError);
 
-    // Fetch Volunteer entries
     const { data: volunteerData, error: volunteerError } = await supabase
       .from('volunteer_entries')
       .select('*')
@@ -95,7 +131,6 @@ export const useSupabaseStore = () => {
     if (volunteerData) setVolunteerEntries(volunteerData);
     if (volunteerError) console.error('Error fetching volunteer entries:', volunteerError);
 
-    // Fetch all folders for the user
     const { data: folderData, error: folderError } = await supabase
       .from('folders')
       .select('*')
@@ -103,7 +138,6 @@ export const useSupabaseStore = () => {
     if (folderData) setFolders(folderData);
     if (folderError) console.error('Error fetching folders:', folderError);
       
-    // Fetch all notes for the user
     const { data: noteData, error: noteError } = await supabase
       .from('notes')
       .select('*')
@@ -111,10 +145,36 @@ export const useSupabaseStore = () => {
     if (noteData) setNotes(noteData);
     if (noteError) console.error('Error fetching notes:', noteError);
 
+    // Fetch finance data
+    const { data: profileData, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (profileData) setUserProfile(profileData);
+    if (profileError && profileError.code !== 'PGRST116') {
+      console.error('Error fetching user profile:', profileError);
+    }
+
+    const { data: spendingData, error: spendingError } = await supabase
+      .from('spending_entries')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (spendingData) setSpendingEntries(spendingData);
+    if (spendingError) console.error('Error fetching spending entries:', spendingError);
+
+    const { data: budgetData, error: budgetError } = await supabase
+      .from('budgets')
+      .select('*')
+      .eq('user_id', userId);
+    if (budgetData) setBudgets(budgetData);
+    if (budgetError) console.error('Error fetching budgets:', budgetError);
+
     setLoading(false);
   };
   
-  // --- Grocery Item Functions (unchanged from last interaction) ---
+  // --- Existing Functions (Grocery, Volunteer, Notes) ---
   const addGroceryItem = async (itemName: string) => {
     if (!session?.user) return;
     const { data, error } = await supabase
@@ -143,7 +203,6 @@ export const useSupabaseStore = () => {
     setGroceryItems((prev) => prev.filter((item) => item.id !== id));
   };
   
-  // --- Volunteer Entry Functions (unchanged from last interaction) ---
   const addVolunteerEntry = async (entry: Omit<VolunteerEntry, 'id' | 'user_id'>) => {
     if (!session?.user) return;
     const { data, error } = await supabase
@@ -172,7 +231,6 @@ export const useSupabaseStore = () => {
     setVolunteerEntries((prev) => prev.filter((item) => item.id !== id));
   };
 
-  // --- Notes & Folders Functions ---
   const createFolder = async (name: string, parent_id: string | null) => {
     if (!session?.user) return;
     const { data, error } = await supabase
@@ -238,9 +296,188 @@ export const useSupabaseStore = () => {
     setNotes((prev) => prev.filter(n => n.folder_id !== folderId));
   };
 
+  // --- Finance Functions ---
+  const createOrUpdateUserProfile = async (profileData: Omit<UserProfile, 'id' | 'updated_at'>) => {
+    if (!session?.user) return;
+    
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .upsert({ 
+        id: session.user.id, 
+        ...profileData,
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error creating/updating user profile:', error);
+      return null;
+    }
+    
+    if (data) {
+      setUserProfile(data);
+      return data;
+    }
+  };
+
+  const addSpendingEntry = async (entryData: Omit<SpendingEntry, 'id' | 'user_id' | 'created_at'>) => {
+    if (!session?.user) return;
+    
+    const { data, error } = await supabase
+      .from('spending_entries')
+      .insert({ 
+        user_id: session.user.id,
+        ...entryData
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error adding spending entry:', error);
+      return null;
+    }
+    
+    if (data) {
+      setSpendingEntries((prev) => [data, ...prev]);
+      return data;
+    }
+  };
+
+  const updateSpendingEntry = async (entryId: string, updates: Partial<SpendingEntry>) => {
+    const { data, error } = await supabase
+      .from('spending_entries')
+      .update(updates)
+      .eq('id', entryId)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error updating spending entry:', error);
+      return null;
+    }
+    
+    if (data) {
+      setSpendingEntries((prev) => prev.map(entry => entry.id === entryId ? data : entry));
+      return data;
+    }
+  };
+
+  const deleteSpendingEntry = async (entryId: string) => {
+    const { error } = await supabase
+      .from('spending_entries')
+      .delete()
+      .eq('id', entryId);
+    
+    if (error) {
+      console.error('Error deleting spending entry:', error);
+      return false;
+    }
+    
+    setSpendingEntries((prev) => prev.filter(entry => entry.id !== entryId));
+    return true;
+  };
+
+  const createBudget = async (budgetData: Omit<Budget, 'id' | 'user_id' | 'created_at'>) => {
+    if (!session?.user) return;
+    
+    const { data, error } = await supabase
+      .from('budgets')
+      .insert({ 
+        user_id: session.user.id,
+        ...budgetData
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error creating budget:', error);
+      return null;
+    }
+    
+    if (data) {
+      setBudgets((prev) => [...prev, data]);
+      return data;
+    }
+  };
+
+  const updateBudget = async (budgetId: string, updates: Partial<Budget>) => {
+    const { data, error } = await supabase
+      .from('budgets')
+      .update(updates)
+      .eq('id', budgetId)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error updating budget:', error);
+      return null;
+    }
+    
+    if (data) {
+      setBudgets((prev) => prev.map(budget => budget.id === budgetId ? data : budget));
+      return data;
+    }
+  };
+
+  const deleteBudget = async (budgetId: string) => {
+    const { error } = await supabase
+      .from('budgets')
+      .delete()
+      .eq('id', budgetId);
+    
+    if (error) {
+      console.error('Error deleting budget:', error);
+      return false;
+    }
+    
+    setBudgets((prev) => prev.filter(budget => budget.id !== budgetId));
+    return true;
+  };
+
+  const createMultipleBudgets = async (budgetsData: Omit<Budget, 'id' | 'user_id' | 'created_at'>[]) => {
+    if (!session?.user) return;
+    
+    const budgetsWithUserId = budgetsData.map(budget => ({
+      user_id: session.user.id,
+      ...budget
+    }));
+    
+    const { data, error } = await supabase
+      .from('budgets')
+      .insert(budgetsWithUserId)
+      .select();
+    
+    if (error) {
+      console.error('Error creating multiple budgets:', error);
+      return null;
+    }
+    
+    if (data) {
+      setBudgets((prev) => [...prev, ...data]);
+      return data;
+    }
+  };
+
+  const resetAllFinanceData = async () => {
+    if (!session?.user) return;
+    
+    // Delete all finance-related data for the user
+    await supabase.from('spending_entries').delete().eq('user_id', session.user.id);
+    await supabase.from('budgets').delete().eq('user_id', session.user.id);
+    await supabase.from('user_profiles').delete().eq('id', session.user.id);
+    
+    // Clear local state
+    setUserProfile(null);
+    setSpendingEntries([]);
+    setBudgets([]);
+  };
+
   return {
     loading,
-    // Grocery & Volunteer
+    session,
+    
+    // Existing features
     groceryItems,
     addGroceryItem,
     toggleGroceryItem,
@@ -249,7 +486,6 @@ export const useSupabaseStore = () => {
     addVolunteerEntry,
     updateVolunteerEntry,
     deleteVolunteerEntry,
-    // Notes & Folders
     folders,
     notes,
     createFolder,
@@ -257,5 +493,19 @@ export const useSupabaseStore = () => {
     updateNote,
     deleteNote,
     deleteFolder,
+    
+    // Finance features
+    userProfile,
+    spendingEntries,
+    budgets,
+    createOrUpdateUserProfile,
+    addSpendingEntry,
+    updateSpendingEntry,
+    deleteSpendingEntry,
+    createBudget,
+    updateBudget,
+    deleteBudget,
+    createMultipleBudgets,
+    resetAllFinanceData,
   };
 };

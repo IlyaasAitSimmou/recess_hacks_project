@@ -13,6 +13,8 @@ interface Note {
   folder_id: number | null;
   created_at: string;
   updated_at: string;
+  type?: 'note' | 'video';
+  video_path?: string;
 }
 
 interface RichTextEditorProps {
@@ -91,14 +93,14 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
     const html = editorRef.current.innerHTML;
     // Common mermaid starters
     const mermaidStart = /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline)\b/i;
-  // 1) Labeled fences: ```mermaid|dot|graphviz|plot|math|chem|smiles|vector|svg
-  let replaced = html.replace(/```(mermaid|dot|graphviz|plot|math|chem|smiles|vector|svg)\n([\s\S]*?)```/gi, (_m, lang, code) => {
+  // 1) Labeled fences: ```mermaid|dot|graphviz|plot|math|chem|vector|svg
+  let replaced = html.replace(/```(mermaid|dot|graphviz|plot|math|chem|vector|svg)\n([\s\S]*?)```/gi, (_m, lang, code) => {
       const language = String(lang).toLowerCase();
       const cls = language === 'graphviz' ? 'language-graphviz' : `language-${language}`;
       return `<pre><code class="${cls}">${escapeHtml(String(code))}</code></pre>`;
     });
     // Also support tildes fences ~~~lang
-  replaced = replaced.replace(/~~~(mermaid|dot|graphviz|plot|math|chem|smiles|vector|svg)\n([\s\S]*?)~~~/gi, (_m, lang, code) => {
+  replaced = replaced.replace(/~~~(mermaid|dot|graphviz|plot|math|chem|vector|svg)\n([\s\S]*?)~~~/gi, (_m, lang, code) => {
       const language = String(lang).toLowerCase();
       const cls = language === 'graphviz' ? 'language-graphviz' : `language-${language}`;
       return `<pre><code class="${cls}">${escapeHtml(String(code))}</code></pre>`;
@@ -113,7 +115,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
       if (/^(plot|math)\b/i.test(body)) {
         return `<pre><code class="language-math">${escapeHtml(String(code))}</code></pre>`;
       }
-      if (/^(chem|smiles)\b/i.test(body)) {
+  if (/^(chem)\b/i.test(body)) {
         return `<pre><code class="language-chem">${escapeHtml(String(code))}</code></pre>`;
       }
       if (/^vector\b/i.test(body)) {
@@ -137,7 +139,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
       if (/^(plot|math)\b/i.test(body)) {
         return `<pre><code class="language-math">${escapeHtml(String(code))}</code></pre>`;
       }
-      if (/^(chem|smiles)\b/i.test(body)) {
+  if (/^(chem)\b/i.test(body)) {
         return `<pre><code class="language-chem">${escapeHtml(String(code))}</code></pre>`;
       }
       if (/^vector\b/i.test(body)) {
@@ -190,7 +192,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
         (codeEl as HTMLElement).className = 'language-mermaid';
       } else if (/^(plot|math)\b/i.test(text)) {
         (codeEl as HTMLElement).className = 'language-math';
-      } else if (/^(chem|smiles)\b/i.test(text)) {
+  } else if (/^(chem)\b/i.test(text)) {
         (codeEl as HTMLElement).className = 'language-chem';
       } else if (/^vector\b/i.test(text)) {
         (codeEl as HTMLElement).className = 'language-vector';
@@ -220,7 +222,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
           codeEl.textContent = raw;
           pre.appendChild(codeEl);
           node.parentNode?.replaceChild(pre, node);
-        } else if (/^(chem|smiles)\b/i.test(trimmed)) {
+    } else if (/^(chem)\b/i.test(trimmed)) {
           const pre = document.createElement('pre');
           const codeEl = document.createElement('code');
           codeEl.className = 'language-chem';
@@ -432,8 +434,13 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
   const mo = new MutationObserver((mutations) => {
       for (const m of mutations) {
         if (m.type === 'childList' || m.type === 'characterData') {
+          // Ignore changes that occur inside our graph wrappers to avoid unnecessary rerenders
+          const targetEl = (m.target as Node) as HTMLElement;
+          if (targetEl && (targetEl.closest && targetEl.closest('.graph-renderer-wrapper'))) {
+            continue;
+          }
           const txt = el.innerText || '';
-      if (/(^|\n)\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|plot|math|chem|smiles|vector)\b/i.test(txt) || txt.includes('```')) {
+  if (/(^|\n)\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|plot|math|chem|vector)\b/i.test(txt) || txt.includes('```')) {
             scheduleRender();
             break;
           }
@@ -541,11 +548,11 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
       
   // Find all graph code blocks and wrap them with a persistent container for GraphRenderer
       const mermaidBlocks = Array.from(container.querySelectorAll(
-        'pre code.language-mermaid, pre code.lang-mermaid, pre code.mermaid, pre code.language-plot, pre code.language-math, pre code.language-chem, pre code.language-smiles, pre code.language-vector, pre code.language-svg'
+  'pre code.language-mermaid, pre code.lang-mermaid, pre code.mermaid, pre code.language-plot, pre code.language-math, pre code.language-chem, pre code.language-vector, pre code.language-svg'
       )) as HTMLElement[];
       console.log('Found mermaid code blocks:', mermaidBlocks.length);
       
-      for (const code of mermaidBlocks) {
+  for (const code of mermaidBlocks) {
         const text = code.textContent || '';
         const pre = code.closest('pre') as HTMLElement | null;
         if (!text.trim() || !pre) continue;
@@ -568,6 +575,12 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
               mount.className = 'graph-container';
               wrapper.appendChild(mount);
             } else {
+              // If code hasn't changed and we already have content, skip re-render
+              const prevSig = (mount as any).dataset.codeSig;
+              const nextSig = String(text.length) + ':' + (text.slice(0, 32) || '');
+              if (prevSig === nextSig && mount.childNodes.length > 0) {
+                continue;
+              }
               mount.innerHTML = '';
             }
           } else {
@@ -593,6 +606,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
           }
           // Use a key on component to force remount when code changes
           const keyBase = String(text.length) + ':' + (text.slice(0, 32) || '');
+          (mount as any).dataset.codeSig = keyBase;
           const rerenders = Number((mount as any).dataset.rerenders || '0');
           const key = `${keyBase}:${rerenders}`;
           root.render(<GraphRenderer key={key} graphCode={text} />);
@@ -621,11 +635,11 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
       const plainPres = Array.from(container.querySelectorAll('pre')) as HTMLElement[];
       console.log('Found plain pre blocks:', plainPres.length);
       
-      for (const pre of plainPres) {
+  for (const pre of plainPres) {
         if (pre.querySelector('code')) continue; // already handled above
 
         const text = (pre.innerText || '').trimStart();
-  if (!/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|plot|math|chem|smiles|vector|svg)\b/i.test(text) && !/^<svg[\s>]/i.test(text)) continue;
+  if (!/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|plot|math|chem|vector|svg)\b/i.test(text) && !/^<svg[\s>]/i.test(text)) continue;
 
         try {
           console.log('Rendering plain pre graph with GraphRenderer:', text.substring(0, 100));
@@ -645,6 +659,11 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
               mount.className = 'graph-container';
               wrapper.appendChild(mount);
             } else {
+              const prevSig = (mount as any).dataset.codeSig;
+              const nextSig = String(text.length) + ':' + (text.slice(0, 32) || '');
+              if (prevSig === nextSig && mount.childNodes.length > 0) {
+                continue;
+              }
               mount.innerHTML = '';
             }
           } else {
@@ -669,6 +688,7 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
             anyWin.__graphRoots.set(mount, root);
           }
           const keyBase = String(text.length) + ':' + (text.slice(0, 32) || '');
+          (mount as any).dataset.codeSig = keyBase;
           const rerenders = Number((mount as any).dataset.rerenders || '0');
           const key = `${keyBase}:${rerenders}`;
           root.render(<GraphRenderer key={key} graphCode={text} />);
@@ -1175,6 +1195,96 @@ export default function RichTextEditor({ note, onSave }: RichTextEditorProps) {
           <p className="text-sm">Select a note from the sidebar to start editing, or create a new one.</p>
           <div className="mt-6 text-xs text-gray-400">
             Use the + buttons in the sidebar to create folders and notes
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If this is a video note, render video player instead of editor
+  if (note?.type === 'video' && note.video_path) {
+    // Check if it's an HTML placeholder or real video
+    const isHtmlPlaceholder = note.video_path.endsWith('.mp4'); // Our backend creates HTML files with .mp4 extension
+    
+    return (
+      <div className="h-full flex flex-col bg-white">
+        <div className="border-b border-gray-200 p-4 flex-shrink-0">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-gray-800">🎥 {note.title}</h2>
+            <div className="text-sm text-gray-500">
+              Video Lesson • Created {new Date(note.created_at).toLocaleDateString()}
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex-1 p-6 overflow-auto">
+          <div className="max-w-4xl mx-auto">
+            <div className="bg-gray-100 rounded-lg p-4 mb-6">
+              <h3 className="text-lg font-medium mb-3">📹 Video Content</h3>
+              
+              {/* Try to detect if it's a real video first */}
+              <div className="relative">
+                {/* First try to load as video */}
+                <video
+                  controls
+                  className="w-full max-w-3xl mx-auto rounded-lg shadow-lg"
+                  style={{ maxHeight: '500px' }}
+                  onError={(e) => {
+                    // If video fails to load, hide it and show iframe
+                    const video = e.target as HTMLVideoElement;
+                    video.style.display = 'none';
+                    const iframe = video.nextElementSibling as HTMLIFrameElement;
+                    if (iframe) iframe.style.display = 'block';
+                  }}
+                >
+                  <source src={note.video_path} type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+                
+                {/* Fallback iframe for HTML placeholders (hidden by default) */}
+                <iframe
+                  src={note.video_path}
+                  className="w-full max-w-3xl mx-auto rounded-lg shadow-lg"
+                  style={{ 
+                    height: '500px', 
+                    border: 'none',
+                    display: 'none' // Hidden by default, shown if video fails
+                  }}
+                  title={`Video content for ${note.title}`}
+                />
+              </div>
+              
+              <div className="text-center text-gray-500 mt-4">
+                <p className="text-sm">
+                  📁 File: {note.video_path}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  If you see an error, this video may be a placeholder. Install Manim for real video generation.
+                </p>
+              </div>
+            </div>
+            
+            <div className="bg-blue-50 rounded-lg p-4">
+              <h4 className="text-md font-medium text-blue-800 mb-2">📝 About This Video</h4>
+              <p className="text-blue-700">
+                This video was automatically generated using AI and Manim animations.
+                It covers the topic: <strong>{note.title}</strong>
+              </p>
+              <div className="mt-3 text-sm text-blue-600">
+                <p><strong>Created:</strong> {new Date(note.created_at).toLocaleString()}</p>
+                <p><strong>File Path:</strong> {note.video_path}</p>
+              </div>
+              
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                <h5 className="text-sm font-medium text-yellow-800 mb-1">💡 How to Enable Real Video Generation</h5>
+                <div className="text-xs text-yellow-700">
+                  <p>1. Install Manim: <code className="bg-yellow-100 px-1 rounded">pip install manim</code></p>
+                  <p>2. Install FFmpeg (required by Manim)</p>
+                  <p>3. Restart the backend server</p>
+                  <p>4. Create a new video to see real Manim animations!</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

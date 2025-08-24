@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import SimpleNotesExplorer from '../../components/SimpleNotesExplorer';
 import RichTextEditor from '../../components/RichTextEditor';
 import AIChatbot from '../../components/AIChatbot';
 import FinancePage from '../../components/FinancePage';
 import GroceryPage from '../dashboard/grocery/page';
 import VolunteerTrackerPage from '../../components/VolunteerTrackerPage';
+
 import { notesStore } from '@/lib/notesStore';
+import { LibraryBig, PiggyBank, ShoppingCart, HeartHandshake, Menu, Bot, X, LogOut } from 'lucide-react';
 
 interface Note {
   id: number;
@@ -38,6 +40,14 @@ export default function Dashboard() {
   const [isChatbotOpen, setIsChatbotOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const tabs = [
+    { id: 'education', label: 'Education', icon: LibraryBig },
+    { id: 'finance', label: 'Finance', icon: PiggyBank },
+    { id: 'grocery', label: 'Grocery', icon: ShoppingCart },
+    { id: 'volunteer', label: 'Volunteer', icon: HeartHandshake },
+  ];
 
   useEffect(() => {
     // Check if user is logged in
@@ -52,6 +62,16 @@ export default function Dashboard() {
     setEmail(userEmail || '');
     setLoading(false);
   }, [router]);
+
+  // Select note from deep link (?noteId=123)
+  useEffect(() => {
+    const idStr = searchParams?.get('noteId');
+    if (!idStr) return;
+    const id = Number(idStr);
+    if (!Number.isFinite(id)) return;
+    const note = notesStore.findNoteById(id as number);
+    if (note) setCurrentNote(note);
+  }, [searchParams]);
 
   const handleSelectNote = (note: Note) => {
     setCurrentNote(note);
@@ -146,51 +166,59 @@ export default function Dashboard() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Tab Navigation - Collapsible */}
         {!isSidebarCollapsed && (
-          <div className="border-b border-gray-200 bg-white px-6 py-3 flex-shrink-0">
+          <div className="border-b border-gray-200 bg-white px-6 py-3 flex-shrink-0 shadow-sm">
             <nav className="-mb-px flex space-x-8" aria-label="Tabs">
               <button
                 onClick={() => setActiveTab('education')}
-                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                className={`flex items-center space-x-2 whitespace-nowrap py-2 px-3 border-b-2 font-medium text-sm transition ${
                   activeTab === 'education'
-                    ? 'border-indigo-500 text-indigo-600'
+                    ? 'border-indigo-500 text-indigo-600 bg-gray-50'
                     : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
                 }`}
               >
-                📚 Education
+                <LibraryBig className="h-5 w-5" />
+                <span>Education</span>
               </button>
+
               <button
                 onClick={() => setActiveTab('finance')}
-                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                className={`flex items-center space-x-2 whitespace-nowrap py-2 px-3 border-b-2 font-medium text-sm transition ${
                   activeTab === 'finance'
-                    ? 'border-indigo-500 text-indigo-600'
+                    ? 'border-indigo-500 text-indigo-600 bg-gray-50'
                     : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
                 }`}
               >
-                💰 Finance
+                <PiggyBank className="h-5 w-5" />
+                <span>Finance</span>
               </button>
+
               <button
                 onClick={() => setActiveTab('grocery')}
-                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                className={`flex items-center space-x-2 whitespace-nowrap py-2 px-3 border-b-2 font-medium text-sm transition ${
                   activeTab === 'grocery'
-                    ? 'border-indigo-500 text-indigo-600'
+                    ? 'border-indigo-500 text-indigo-600 bg-gray-50'
                     : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
                 }`}
               >
-                🛒 Grocery
+                <ShoppingCart className="h-5 w-5" />
+                <span>Grocery</span>
               </button>
+
               <button
                 onClick={() => setActiveTab('volunteer')}
-                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                className={`flex items-center space-x-2 whitespace-nowrap py-2 px-3 border-b-2 font-medium text-sm transition ${
                   activeTab === 'volunteer'
-                    ? 'border-indigo-500 text-indigo-600'
+                    ? 'border-indigo-500 text-indigo-600 bg-gray-50'
                     : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
                 }`}
               >
-                🤝 Volunteer
+                <HeartHandshake className="h-5 w-5" />
+                <span>Volunteer</span>
               </button>
             </nav>
           </div>
         )}
+
 
         {/* Tab Content - Full width and height */}
         {activeTab === 'education' && (
@@ -256,3 +284,4 @@ export default function Dashboard() {
     </div>
   );
 }
+

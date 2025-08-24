@@ -6,8 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 // Global variables provided by the environment
 // Note: In this environment, we'll use a placeholder URL and key for demonstration.
 // In a real application, you would configure these with your actual Supabase credentials.
-const supabaseUrl = 'https://your-project-id.supabase.co';
-const supabaseKey = 'your-public-anon-key';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Define data interfaces for type safety

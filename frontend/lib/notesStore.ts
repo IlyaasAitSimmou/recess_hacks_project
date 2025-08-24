@@ -16,6 +16,8 @@ export interface Note {
   folder_id: number | null;
   created_at: string;
   updated_at: string;
+  type?: 'note' | 'video';
+  video_path?: string;
 }
 
 type Listener = () => void;
@@ -154,6 +156,21 @@ export const notesStore = {
       title: title || 'Untitled',
       content,
       folder_id,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+    state.notes.push(n);
+    emit();
+    return n;
+  },
+  createVideoNote(title: string, videoPath: string, folder_id: number | null): Note {
+    const n: Note = {
+      id: nextId(state.notes),
+      title,
+      content: `Video lesson: ${title}`,
+      folder_id,
+      type: 'video',
+      video_path: videoPath,
       created_at: nowISO(),
       updated_at: nowISO(),
     };

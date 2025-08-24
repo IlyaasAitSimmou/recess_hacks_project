@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { notesStore, type Note } from '@/lib/notesStore';
+import FileSelector from './FileSelector';
 
 interface Message {
   id: string;
@@ -17,9 +18,14 @@ interface NoteAction {
   title?: string;
   content?: string;
   noteId?: number;
+  folderId?: number | null;
   // diagram-specific
   target?: 'new' | 'append';
   diagram?: string;
+  // edit-specific
+  mode?: 'append' | 'replace' | 'remove';
+  find?: string;
+  replaceWith?: string;
 }
 
 // Note type comes from notesStore
@@ -37,6 +43,8 @@ export default function AIChatbot({ currentNote, isOpen, onClose, onNoteUpdate }
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [allNotesSnapshot, setAllNotesSnapshot] = useState<Note[]>(notesStore.getAllNotes());
+  const [selectedNote, setSelectedNote] = useState<Note | null>(currentNote);
+  const [isVideoMode, setIsVideoMode] = useState(false);
 
   useEffect(() => {
     // Keep an up-to-date snapshot of all notes for AI context
@@ -67,7 +75,7 @@ export default function AIChatbot({ currentNote, isOpen, onClose, onNoteUpdate }
 
   // Initialize Gemini model
   function getModel() {
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || 'AIzaSyB5mlVHMkZAA11UTe8lHGE2WSxeb4AfSPU';
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || 'eee';
     const ai = new GoogleGenerativeAI(apiKey);
     return ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
   }
@@ -75,21 +83,33 @@ export default function AIChatbot({ currentNote, isOpen, onClose, onNoteUpdate }
   // Prompt engineering: return structured JSON actions only
   function buildSystemInstruction() {
     const notesContext = allNotesSnapshot.map(n => ({ id: n.id, title: n.title, folder_id: n.folder_id, content: n.content })).slice(0, 50);
+    const selectedNoteInfo = selectedNote ? `SELECTED NOTE: ID ${selectedNote.id}, Title: "${selectedNote.title}"` : 'NO NOTE SELECTED';
+    
     return `You are an AI note assistant with full write access. You MUST return only JSON matching this schema in your response, no prose:
 {
   "actions": [
     {"type":"create","title":string,"content":string,"folderId": number|null},
-    {"type":"edit","noteId":number,"title?":string,"content":string},
+    {"type":"edit","noteId?":number,"title?":string,"content":string,"mode?":"append|replace|remove","find?":string,"replaceWith?":string},
     {"type":"format","noteId":number,"content":string},
     {"type":"diagram","target":"new|append","noteId?":number,"title?":string,"diagram": string}
   ]
 }
 
+IMPORTANT NOTE SELECTION RULES:
+- ${selectedNoteInfo}
+- If a note is selected (noteId provided above), ALWAYS use "edit" action with that noteId unless the user explicitly asks to create a new note
+- Only use "create" action when NO note is selected OR user explicitly requests a new note
+- When editing, set noteId to the selected note's ID: ${selectedNote?.id ?? 'null'}
+
 Rules:
 - Use HTML for headings/lists/formatting with inline CSS as desired (font-size, color, bold/italic, etc.).
 - For math, embed LaTeX between $$ ... $$ blocks anywhere in the HTML.
 - For diagrams:
-  • Flow/process/sequence/class → use Mermaid, wrapped in <pre><code class="language-mermaid">...</code></pre>.
+  • Choose the diagram type by context (DON'T default to flowcharts):
+    – Math functions/equations → <pre><code class="language-plot">...</code></pre>
+    – Physical vectors/forces/arrows → <pre><code class="language-vector">...</code></pre>
+    – Molecules/chemistry → <pre><code class="language-chem">...</code></pre>
+    – Workflows/steps/process/sequence/class → <pre><code class="language-mermaid">...</code></pre>
   • Math plots (like Desmos) → use <pre><code class="language-plot">...</code></pre> with syntax:
     plot\n
     f(x) = sin(x)\n
@@ -101,11 +121,10 @@ Rules:
     vec (0,0) -> (3,4) label: v
   • Chemistry (molecules/reactions) → use <pre><code class="language-chem">...</code></pre> with syntax:
     chem\n
-    smiles: C1=CC=CC=C1
+    benzene
   Ensure one diagram per code block and correct language class.
 - Keep content readable and self-contained. No outer <html> or <body> tags.
-- When user asks to edit the current note, produce an 'edit' action editing that noteId.
-- Prefer editing the currently selected note (id: ${currentNote?.id ?? 'null'}) when appropriate.
+- For edits, set "mode" to one of: append (add under existing content), remove (delete provided snippet), replace (use with "find" and "replaceWith" to change parts). Avoid replacing entire files.
 - Never include markdown explanations outside the JSON. Return only JSON.
 
 Mermaid Syntax Rules (CRITICAL - Follow exactly):
@@ -172,139 +191,101 @@ Note: The GraphRenderer parses language-mermaid, language-plot, language-vector,
     setIsLoading(true);
     setMessages((prev) => [...prev, userMessage]);
     if (!overrideText) setInputMessage('');
+
     try {
-      let actions = await callAI(userMessage.content);
-
-      // Fallback: if no actions parsed, synthesize an edit using HTML content
-  if (!actions.length) {
-        console.log('No AI actions parsed, using fallback content generation');
-        const targetNoteId = pickTargetNoteId(userMessage.content);
-        console.log('Target note ID:', targetNoteId);
-        const contentHtml = await callAIForContent(userMessage.content, targetNoteId);
-        console.log('Generated fallback content:', contentHtml);
-        if (targetNoteId && contentHtml) {
-          // Check if the user is asking for diagrams and ensure proper formatting
-          const isDiagramRequest = /diagram|graph|chart|flowchart|visual/i.test(userMessage.content);
-          console.log('Is diagram request:', isDiagramRequest);
-          let finalContent = contentHtml;
-          
-          if (isDiagramRequest) {
-            // Ensure Mermaid code is properly wrapped
-            // Look for lines starting with graph, flowchart, etc. and wrap them
-            finalContent = contentHtml.replace(
-              /(graph\s+[A-Z]{2}[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-mermaid">$1</code></pre>'
-            );
-            
-            // Also look for any other Mermaid syntax patterns
-            finalContent = finalContent.replace(
-              /(flowchart\s+[A-Z]{2}[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-mermaid">$1</code></pre>'
-            );
-            
-            finalContent = finalContent.replace(
-              /(sequenceDiagram[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-mermaid">$1</code></pre>'
-            );
-            
-            finalContent = finalContent.replace(
-              /(classDiagram[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-mermaid">$1</code></pre>'
-            );
-
-            // Plot/Math blocks
-            finalContent = finalContent.replace(
-              /(plot[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-plot">$1</code></pre>'
-            );
-            finalContent = finalContent.replace(
-              /(math[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-plot">$1</code></pre>'
-            );
-
-            // Chemistry blocks
-            finalContent = finalContent.replace(
-              /((?:chem|smiles)[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-chem">$1</code></pre>'
-            );
-
-            // Vector blocks
-            finalContent = finalContent.replace(
-              /(vector[\s\S]*?)(?=\n\n|$)/gi,
-              '<pre><code class="language-vector">$1</code></pre>'
-            );
-            
-            // If no diagrams were found, add a simple one
-            if (!finalContent.includes('language-mermaid')) {
-              console.log('No diagrams found in content, adding simple diagram');
-              const simpleDiagram = `
-                <h3>Generated Diagram</h3>
-                <p>Here's a simple flowchart based on your request:</p>
-                <pre><code class="language-mermaid">graph LR
-                  A[Start] --> B{Process?}
-                  B -->|Yes| C[Continue]
-                  B -->|No| D[Stop]
-                  C --> E[End]
-                  D --> E</code></pre>
-                <h3>Generated Plot</h3>
-                <pre><code class="language-plot">plot
-f(x) = sin(x)
-g(x) = x^2 - 4
-domain: -6.28..6.28</code></pre>
-                <h3>Generated Vector</h3>
-                <pre><code class="language-vector">vector
-axes: -10..10 x -10..10
-vec (0,0) -> (3,4) label: v</code></pre>
-              `;
-              finalContent = contentHtml + simpleDiagram;
-            }
-            
-            // Also simplify any complex diagrams that might fail
-            finalContent = finalContent.replace(
-              /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
-              (match, diagramCode) => {
-                // First try to fix syntax while preserving complex features
-                let fixedSyntax = diagramCode
-                  // Fix coordinate syntax - ensure proper spacing
-                  .replace(/\[\(([^)]+)\)/g, '[$1]')
-                  // Fix style commands - ensure proper semicolon placement
-                  .replace(/style\s+(\w+)\s+([^;]+);/g, 'style $1 $2;')
-                  // Fix subgraph syntax - ensure proper quotes and spacing
-                  .replace(/subgraph\s+["']([^"']*)["']\s*\n/g, 'subgraph "$1"\n')
-                  // Fix arrow syntax - ensure proper spacing
-                  .replace(/(\w+)\s*--\s*(\w+)/g, '$1 -- $2')
-                  // Fix node definitions - ensure proper spacing
-                  .replace(/(\w+)\[([^\]]+)\]/g, '$1[$2]')
-                  // Clean up extra whitespace
-                  .replace(/\n\s*\n/g, '\n')
-                  .trim();
-                
-                console.log('Fixed complex diagram syntax from:', diagramCode.substring(0, 100));
-                console.log('To:', fixedSyntax.substring(0, 100));
-                
-                return `<pre><code class="language-mermaid">${fixedSyntax}</code></pre>`;
-              }
-            );
-            
-            console.log('Final content after diagram processing:', finalContent);
-          }
-          
-          actions = [{ type: 'edit', noteId: targetNoteId, content: finalContent } as NoteAction];
-          console.log('Created fallback action:', actions[0]);
-        }
+      // Check if we're in video mode
+      if (isVideoMode) {
+        // Handle video creation
+        const processingMessage: Message = {
+          id: `video-processing-${Date.now()}`,
+          content: `🎬 **Creating Video: "${textToSend}"**\n\nStep 1: Analyzing topic and creating comprehensive script...\nStep 2: Generating Manim animation code...\nStep 3: Rendering video with animations...\n\n⏳ This may take a few minutes. Please wait...`,
+          isUser: false,
+          timestamp: new Date(),
+        };
+        
+        setMessages(prev => [...prev, processingMessage]);
+        
+        // Create the video
+        await createVideoLesson(textToSend);
+        return;
       }
 
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: actions.length ? 'Applied your requested changes to notes.' : 'No actionable changes detected.',
-        isUser: false,
-        timestamp: new Date(),
-        actions,
-      };
-      setMessages((prev) => [...prev, aiMessage]);
+      // Regular note editing mode - call AI to process the message
+      const actions = await callAI(userMessage.content);
+
       if (actions.length) {
-        console.log('AI Actions:', actions);
-        await processNoteActions(actions);
+        const targetNote = selectedNote; // Ensure the selected note is used
+
+        if (targetNote) {
+          console.log('AI Actions:', actions);
+          await processNoteActions(actions, userMessage.content, targetNote);
+        } else {
+          // If no note is selected, check if the AI wants to create a new note
+          const hasCreateAction = actions.some(action => action.type === 'create');
+          
+          if (hasCreateAction) {
+            console.log('[AI] Processing create actions without selected note');
+            await processNoteActions(actions, userMessage.content, null);
+          } else {
+            console.log('[AI] No note selected. Prompting user to select a file.');
+            const notify: Message = {
+              id: 'ai-no-target-' + Date.now().toString(),
+              isUser: false,
+              timestamp: new Date(),
+              content: `Please select a file to edit, or I can create a new note for you. Just ask me to create something!`,
+            };
+            setMessages((prev) => [...prev, notify]);
+          }
+        }
+      } else {
+        // If no actions returned, provide a general response
+        const generalContent = await callAIForContent(userMessage.content);
+        
+        if (generalContent.trim()) {
+          // Create a new note with the AI response if no note is selected
+          if (!selectedNote) {
+            const newNote = notesStore.createNote(
+              `AI Response - ${new Date().toLocaleDateString()}`,
+              generalContent,
+              null
+            );
+            
+            const responseMessage: Message = {
+              id: 'ai-response-' + Date.now().toString(),
+              isUser: false,
+              timestamp: new Date(),
+              content: `I've created a new note with my response: **${newNote.title}**`,
+            };
+            setMessages((prev) => [...prev, responseMessage]);
+          } else {
+            // Add to existing note
+            const currentContent = selectedNote.content || '';
+            const updatedNote = notesStore.updateNote(selectedNote.id, {
+              content: currentContent + '\n\n' + generalContent
+            });
+            
+            if (updatedNote) {
+              const responseMessage: Message = {
+                id: 'ai-response-' + Date.now().toString(),
+                isUser: false,
+                timestamp: new Date(),
+                content: `I've added my response to your note: **${updatedNote.title}**`,
+              };
+              setMessages((prev) => [...prev, responseMessage]);
+            }
+          }
+          
+          onNoteUpdate?.();
+        } else {
+          // Fallback response
+          const fallbackMessage: Message = {
+            id: 'ai-fallback-' + Date.now().toString(),
+            isUser: false,
+            timestamp: new Date(),
+            content: `I understand you want help with: "${userMessage.content}". Could you be more specific about what you'd like me to create or edit?`,
+          };
+          setMessages((prev) => [...prev, fallbackMessage]);
+        }
       }
     } catch (error) {
       const errorMessage: Message = {
@@ -319,19 +300,105 @@ vec (0,0) -> (3,4) label: v</code></pre>
     }
   };
 
+  const handleFileSelection = (note: Note | null) => {
+    setSelectedNote(note);
+  };
+
   // Try to select a target note based on current selection or fuzzy title match in user text
   function pickTargetNoteId(userText: string): number | null {
-    if (currentNote?.id) return currentNote.id;
+    console.log('[AI] pickTargetNoteId input:', { userText, currentNoteId: currentNote?.id });
+
+    // Prefer current note when available (explicit user context)
+    if (currentNote?.id) {
+      console.log('[AI] pickTargetNoteId -> using currentNote.id', currentNote.id);
+      return currentNote.id;
+    }
+
     const text = userText.toLowerCase();
-    // Simple title match against all notes
-    let best: Note | undefined;
-    for (const n of allNotesSnapshot) {
-      const t = (n.title || '').toLowerCase();
-      if (t && (text.includes(t) || t.includes('limit') && text.includes('limit'))) {
-        best = n; break;
+
+    // Try quoted title first: edit "Some Title"
+    const quoted = userText.match(/"([^"]+)"|'([^']+)'/);
+    const explicitTitle = quoted?.[1] || quoted?.[2] || extractTitlePhrase(userText);
+
+    if (explicitTitle) {
+      // Check for exact match first
+      const exact = allNotesSnapshot.find(n => (n.title || '').toLowerCase() === explicitTitle.toLowerCase());
+      if (exact) {
+        console.log('[AI] Exact match found for title:', explicitTitle);
+        return exact.id;
       }
     }
-    return best?.id ?? (allNotesSnapshot[0]?.id ?? null);
+
+    // Fuzzy match against titles, but require a higher confidence threshold
+    let bestNote: Note | undefined;
+    let bestScore = 0;
+    for (const n of allNotesSnapshot) {
+      const t = (n.title || '').toLowerCase();
+      if (!t) continue;
+      const s = stringSimilarity((explicitTitle || text), t);
+      if (s > bestScore) {
+        bestScore = s;
+        bestNote = n;
+      }
+    }
+
+    // Only choose a fuzzy match if similarity >= 0.6; else return null to indicate no confident target.
+    const result = (bestScore >= 0.6 && bestNote) ? bestNote.id : null;
+    console.log('[AI] pickTargetNoteId result:', { bestScore, bestNoteId: bestNote?.id ?? null, returned: result });
+
+    if (!result) {
+      console.log('[AI] No confident match found. Prompting user for clarification.');
+      const clarificationMessage: Message = {
+        id: 'ai-clarify-' + Date.now().toString(),
+        isUser: false,
+        timestamp: new Date(),
+        content: `I couldn't confidently determine which note to edit. Please specify the note title or ensure a note is selected.`,
+      };
+      setMessages((prev) => [...prev, clarificationMessage]);
+    }
+
+    return result;
+  }
+
+  function extractTitlePhrase(s: string): string | null {
+    const patterns = [
+      /(?:in|into|to) (?:the )?note(?: called| titled| named)?\s+([\w\s-]{2,})/i,
+      /(?:edit|update|change|append)\s+([\w\s-]{2,})/i,
+    ];
+    for (const rx of patterns) {
+      const m = s.match(rx);
+      if (m && m[1]) return m[1].trim();
+    }
+    return null;
+  }
+
+  // Simple Dice coefficient for fuzzy matching
+  function stringSimilarity(a: string, b: string): number {
+    if (!a || !b) return 0;
+    a = a.replace(/\s+/g, ' ').trim();
+    b = b.replace(/\s+/g, ' ').trim();
+    if (a === b) return 1;
+    const bigrams = (s: string) => {
+      const arr: string[] = [];
+      for (let i = 0; i < s.length - 1; i++) arr.push(s.slice(i, i + 2));
+      return arr;
+    };
+    const A = new Map<string, number>();
+    for (const g of bigrams(a)) A.set(g, (A.get(g) || 0) + 1);
+    const B = new Map<string, number>();
+    for (const g of bigrams(b)) B.set(g, (B.get(g) || 0) + 1);
+    let overlap = 0;
+    for (const [g, c] of A) overlap += Math.min(c, B.get(g) || 0);
+    const total = Array.from(A.values()).reduce((s, x) => s + x, 0) + Array.from(B.values()).reduce((s, x) => s + x, 0);
+    return total ? (2 * overlap) / total : 0;
+  }
+
+  function inferEditMode(userText: string): 'append' | 'replace' | 'remove' {
+    const t = userText.toLowerCase();
+    if (/(add|append|insert|extend|below|under)/.test(t)) return 'append';
+    if (/(remove|delete|erase|strip out)/.test(t)) return 'remove';
+    if (/(replace|overwrite|swap)/.test(t)) return 'replace';
+    return 'append';
   }
 
   // Content-only generation: ask the model to return HTML with LaTeX and Mermaid code fences
@@ -343,8 +410,12 @@ vec (0,0) -> (3,4) label: v</code></pre>
 Requirements:
 - Use headings, paragraphs, lists.
 - Include LaTeX between $$ ... $$ where appropriate.
-- For diagrams, ALWAYS use Mermaid syntax wrapped in <pre><code class="language-mermaid">...</code></pre> tags.
-- Use SIMPLE Mermaid syntax that will render reliably.
+- For diagrams, choose the most appropriate type and wrap it in the correct code fence:
+  • Math plots → <pre><code class="language-plot">...</code></pre>
+  • Physics vectors → <pre><code class="language-vector">...</code></pre>
+  • Chemistry (use common names or formulas ONLY; do NOT use SMILES) → <pre><code class="language-chem">chem\nbenzene</code></pre> (replace with requested molecule)
+  • Workflows/sequence/class → <pre><code class="language-mermaid">...</code></pre>
+- Use SIMPLE, reliable syntax.
 - Keep content readable and self-contained. No outer <html> or <body> tags.
 - When creating diagrams, make them meaningful and well-structured.
 - IMPORTANT: Diagrams will NOT render unless they are wrapped in <pre><code class="language-mermaid">...</code></pre> tags.
@@ -380,50 +451,99 @@ When creating diagrams, keep them simple and avoid complex styling that might ca
   }
 
   // Process note actions from AI
-  const processNoteActions = async (actions: NoteAction[]) => {
-    console.log('Processing note actions:', actions);
+  const processNoteActions = async (actions: NoteAction[], userText: string, selectedNote: Note | null) => {
+    console.log('[AI] Processing note actions:', actions);
+
     for (const action of actions) {
       try {
         if (action.type === 'create') {
-          console.log('Creating note with content:', action.content);
-          const destFolder = (action as any).folderId ?? currentNote?.folder_id ?? null;
-          notesStore.createNote(action.title || 'Untitled', action.content || '', destFolder);
-        } else if (action.type === 'edit' && action.noteId) {
-          console.log('Editing note with content:', action.content);
-          notesStore.updateNote(action.noteId, {
+          // Create a new note
+          const title = action.title || `New Note - ${new Date().toLocaleDateString()}`;
+          const content = action.content || '';
+          const folderId = action.folderId || null;
+          
+          const newNote = notesStore.createNote(title, content, folderId);
+          
+          const createMessage: Message = {
+            id: 'ai-created-' + Date.now().toString(),
+            isUser: false,
+            timestamp: new Date(),
+            content: `✅ Created new note: **${newNote.title}**`,
+          };
+          setMessages((prev) => [...prev, createMessage]);
+          
+          postLinkMessage(newNote.id, newNote.title);
+          continue;
+        }
+
+        if (action.type === 'edit') {
+          let targetId = action.noteId ?? null;
+
+          if (!targetId && selectedNote) {
+            targetId = selectedNote.id;
+          }
+
+          if (!targetId) {
+            console.log('[AI] No target note resolved for edit action; creating new note instead.');
+            const title = action.title || `New Note - ${new Date().toLocaleDateString()}`;
+            const content = action.content || '';
+            
+            const newNote = notesStore.createNote(title, content, null);
+            
+            const createMessage: Message = {
+              id: 'ai-created-' + Date.now().toString(),
+              isUser: false,
+              timestamp: new Date(),
+              content: `✅ Created new note: **${newNote.title}**`,
+            };
+            setMessages((prev) => [...prev, createMessage]);
+            
+            postLinkMessage(newNote.id, newNote.title);
+            continue;
+          }
+
+          const existing = notesStore.findNoteById(targetId);
+          const infoEdit: Message = {
+            id: 'ai-editing-' + Date.now().toString(),
+            isUser: false,
+            timestamp: new Date(),
+            content: `Editing note ID ${targetId}: <strong>${escapeHtml(existing?.title || 'Untitled')}</strong>`,
+          };
+          setMessages((prev) => [...prev, infoEdit]);
+
+          const currentContent = existing?.content || '';
+          const mode = action.mode || inferEditMode(userText);
+          const find = action.find;
+          const replaceWith = action.replaceWith;
+          let newContent = currentContent;
+
+          if (mode === 'remove') {
+            const snippet = (action.content || '').trim();
+            if (snippet) {
+              const re = new RegExp(escapeRegExp(snippet), 'g');
+              newContent = currentContent.replace(re, '').replace(/\n{3,}/g, '\n\n');
+            }
+          } else if (mode === 'replace') {
+            if (find && typeof replaceWith === 'string') {
+              try {
+                const re = new RegExp(find, 'g');
+                newContent = currentContent.replace(re, replaceWith);
+              } catch {
+                newContent = currentContent.split(find).join(replaceWith);
+              }
+            } else if ((action.content || '').trim()) {
+              newContent = currentContent + '\n' + (action.content || '').trim();
+            }
+          } else {
+            const toAppend = (action.content || '').trim();
+            if (toAppend) newContent = currentContent + '\n' + toAppend;
+          }
+
+          const updated = notesStore.updateNote(targetId, {
             title: action.title ?? undefined,
-            content: action.content || '',
+            content: newContent,
           });
-        } else if (action.type === 'format' && action.noteId) {
-          console.log('Formatting note with content:', action.content);
-          notesStore.updateNote(action.noteId, { content: action.content || '' });
-        } else if (action.type === 'diagram') {
-          console.log('Processing diagram action:', action);
-          const raw = (action.diagram || '').trim();
-          const looksSvg = /^<svg[\s>]/i.test(raw) || /^svg\b/i.test(raw);
-          const looksChem = /^(chem|smiles)\b/i.test(raw);
-          const looksPlot = /^(plot|math)\b/i.test(raw);
-          const looksVector = /^vector\b/i.test(raw);
-          const looksMermaid = /^(graph|flowchart|sequenceDiagram|classDiagram)\b/i.test(raw);
-          let wrapped = raw;
-          if (!/class="language-/.test(raw)) {
-            if (looksSvg) wrapped = `<pre><code class="language-svg">${raw}</code></pre>`;
-            else if (looksChem) wrapped = `<pre><code class="language-chem">${raw}</code></pre>`;
-            else if (looksPlot) wrapped = `<pre><code class="language-plot">${raw}</code></pre>`;
-            else if (looksVector) wrapped = `<pre><code class="language-vector">${raw}</code></pre>`;
-            else if (looksMermaid) wrapped = `<pre><code class="language-mermaid">${raw}</code></pre>`;
-            else wrapped = `<pre><code class="language-mermaid">graph LR\nA[Start] --> B[End]</code></pre>`;
-          }
-          if (action.target === 'new') {
-            const diagramContent = wrapped;
-            console.log('Creating new diagram note with content:', diagramContent);
-            notesStore.createNote(action.title || 'Diagram', diagramContent, null);
-          } else if (action.noteId) {
-            const n = notesStore.findNoteById(action.noteId);
-            const appended = (n?.content || '') + `\n${wrapped}`;
-            console.log('Appending diagram to note with content:', appended);
-            notesStore.updateNote(action.noteId, { content: appended });
-          }
+          if (updated) postLinkMessage(targetId, updated.title);
         }
       } catch (error) {
         console.error('Error processing AI action:', error);
@@ -431,6 +551,36 @@ When creating diagrams, keep them simple and avoid complex styling that might ca
     }
     onNoteUpdate?.();
   };
+
+  function postLinkMessage(noteId: number, title: string) {
+    const url = `/dashboard?noteId=${noteId}`;
+    const msg: Message = {
+      id: 'link-' + Date.now().toString(),
+      isUser: false,
+      timestamp: new Date(),
+      content: `Edited: <a href="${url}" class="text-blue-600 underline">${escapeHtml(title || 'Untitled')}</a>`,
+    } as any;
+    setMessages((prev) => [...prev, msg]);
+  }
+
+  function buildResultSummary(actions: NoteAction[]) {
+    const edited = actions.filter(a => a.type === 'edit').length;
+    const created = actions.filter(a => a.type === 'create').length;
+    const diagrams = actions.filter(a => a.type === 'diagram').length;
+    const parts: string[] = [];
+    if (edited) parts.push(`${edited} edit${edited>1?'s':''}`);
+    if (created) parts.push(`${created} new note${created>1?'s':''}`);
+    if (diagrams) parts.push(`${diagrams} diagram${diagrams>1?'s':''}`);
+    return `Applied: ${parts.join(', ') || 'no changes'}.`;
+  }
+
+  function escapeRegExp(s: string) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function escapeHtml(s: string) {
+    return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c] as string));
+  }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -635,6 +785,417 @@ When creating diagrams, keep them simple and avoid complex styling that might ca
   sendMessage("Analyze all my notes and suggest how to better organize them with folders and improved titles.");
   };
 
+  // Function to toggle video lesson mode
+  function toggleVideoMode() {
+    setIsVideoMode(!isVideoMode);
+    
+    const modeMessage: Message = {
+      id: `mode-${Date.now()}`,
+      content: isVideoMode 
+        ? "📝 Switched to note editing mode. I can now help you edit and create notes."
+        : "🎥 Video creation mode activated! Describe what you want me to teach and I'll create a comprehensive video lesson using Manim.",
+      isUser: false,
+      timestamp: new Date(),
+    };
+    
+    setMessages(prev => [...prev, modeMessage]);
+  }
+
+  // Function to create video lesson with Manim
+  async function createVideoLesson(topic: string): Promise<void> {
+    setIsLoading(true);
+    
+    try {
+      // Update progress message
+      const updateProgress = (step: string, description: string) => {
+        const progressMessage: Message = {
+          id: `video-progress-${Date.now()}`,
+          content: `🎬 **Creating Video: "${topic}"**\n\n${step}\n\n${description}`,
+          isUser: false,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev.slice(0, -1), progressMessage]); // Replace last progress message
+      };
+
+      // Step 1: AI creates comprehensive video script (30-second segments)
+      updateProgress("🎯 Step 1/4: Analyzing topic and creating comprehensive script...", "Breaking down the topic into 30-second educational segments with detailed visual descriptions.");
+      const videoScript = await generateVideoScript(topic);
+      
+      // Step 2: Generate Manim code from script
+      updateProgress("💻 Step 2/4: Generating Manim animation code...", "Converting the script into professional Manim Python code with animations, equations, and diagrams.");
+      const manimCode = await generateManimCode(videoScript);
+      
+      // Step 3: Save and render video
+      updateProgress("🎥 Step 3/4: Rendering video with Manim...", "Running Manim to generate the actual video file. This may take a few minutes for complex animations.");
+      const videoResult = await renderVideo(manimCode, topic);
+      
+      // Step 4: Save video as a note in the store
+      updateProgress("💾 Step 4/4: Saving video to your notes...", "Creating a video note entry in your workspace.");
+      const videoNote = notesStore.createVideoNote(
+        topic,
+        videoResult.video_path,
+        null // Save to root folder, or could use currentFolderId if available
+      );
+      
+      // Step 5: Add completion message
+      const completionMessage: Message = {
+        id: `video-complete-${Date.now()}`,
+        content: `✅ **Video Created Successfully!**\n\nYour video "${topic}" has been generated and saved to the repository. The video includes:\n\n${videoScript.sections.map((section, i) => `📹 **Section ${i + 1}**: ${section.title} (${section.duration}s)`).join('\n')}\n\n🎬 **Total Duration**: ${videoScript.totalDuration} seconds\n📁 **File Location**: ${videoResult.video_path}\n\n📝 **Note ID**: ${videoNote.id} - You can find this video in your notes list!\n\n${videoResult.method === 'manim' ? '🎉 **Real Manim video generated!**' : '⚠️ **Placeholder created** - Install Manim for real videos'}`,
+        isUser: false,
+        timestamp: new Date(),
+      };
+      
+      setMessages(prev => [...prev.slice(0, -1), completionMessage]); // Replace progress message
+      
+      // Trigger notes refresh if callback is available
+      if (onNoteUpdate) {
+        onNoteUpdate();
+      }
+      
+    } catch (error) {
+      console.error('Video creation failed:', error);
+      const errorMessage: Message = {
+        id: `video-error-${Date.now()}`,
+        content: `❌ **Video Creation Failed**\n\nThere was an error creating the video: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease try again or check the topic description.`,
+        isUser: false,
+        timestamp: new Date(),
+      };
+      
+      setMessages(prev => [...prev.slice(0, -1), errorMessage]); // Replace progress message
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Generate comprehensive video script using AI
+  async function generateVideoScript(topic: string) {
+    const model = getModel();
+    
+    const prompt = `Create a comprehensive educational video script for the topic: "${topic}"
+
+You must break this into exactly 30-second segments. Each segment should be educational, engaging, and buildable with Manim animations.
+
+Please structure your response as a detailed video plan with the following format:
+
+TITLE: [Video Title] (don't include any repetitive phrases from the prompt)
+
+OVERVIEW: [Brief overview of what the video covers]
+
+SECTIONS: [Break the content into 30-second segments - aim for 6-10 sections total]
+
+For each section, provide:
+- Section Title: [Clear, descriptive title]
+- Duration: 30 seconds
+- Content: [What will be explained - be specific about mathematical concepts, formulas, relationships]
+- Visuals: [Detailed description of animations, graphs, diagrams, equations that Manim should create]
+- Captions: [Key text that should appear on screen]
+- Narration: [Exact script for voiceover - educational and clear]
+
+Requirements:
+- Focus on mathematical concepts, scientific principles, or educational content
+- Each section should build on the previous one logically
+- Include specific mathematical formulas where relevant (use LaTeX notation)
+- Describe visual elements that can be animated with Manim (graphs, equations, geometric shapes, etc.)
+- Make it engaging and educational
+- Total video should be 3-5 minutes (6-10 sections)
+
+Example format:
+SECTION 1: Introduction to Derivatives
+Duration: 30s
+Content: Introduce the concept of derivatives as the instantaneous rate of change
+Visuals: Graph of f(x) = x² with a tangent line that moves along the curve, showing slope changes
+Captions: "Derivative = Instantaneous Rate of Change"
+Narration: "Welcome to our lesson on derivatives. A derivative tells us how fast something is changing at any given moment. Watch as this tangent line shows us the slope at different points..."
+
+SECTION 2: The Limit Definition
+Duration: 30s
+Content: Show the formal limit definition of a derivative
+Visuals: Animation of secant lines approaching a tangent line, with the limit formula appearing
+Captions: "f'(x) = lim(h→0) [f(x+h) - f(x)]/h"
+Narration: "The derivative is defined as the limit of the difference quotient as h approaches zero..."
+
+Continue this format for all sections.`;
+
+    const result = await model.generateContent(prompt);
+    const scriptText = result.response.text();
+    
+    // Parse the AI response into structured data
+    const sections = parseVideoScript(scriptText);
+    
+    return {
+      title: topic,
+      sections,
+      totalDuration: sections.length * 30,
+      scriptText
+    };
+  }
+
+  // Parse AI-generated script into structured format
+  function parseVideoScript(scriptText: string) {
+    const sections = [];
+    const sectionMatches = scriptText.match(/SECTION \d+:[\s\S]*?(?=SECTION \d+:|$)/g);
+    
+    if (sectionMatches) {
+      for (const match of sectionMatches) {
+        const titleMatch = match.match(/SECTION \d+: (.+)/);
+        const contentMatch = match.match(/Content: (.+)/);
+        const visualsMatch = match.match(/Visuals: (.+)/);
+        const captionsMatch = match.match(/Captions: (.+)/);
+        const narrationMatch = match.match(/Narration: (.+)/);
+        
+        sections.push({
+          title: titleMatch?.[1] || 'Untitled Section',
+          content: contentMatch?.[1] || '',
+          visuals: visualsMatch?.[1] || '',
+          captions: captionsMatch?.[1] || '',
+          narration: narrationMatch?.[1] || '',
+          duration: 30
+        });
+      }
+    }
+    
+    return sections;
+  }
+
+  // Generate Manim code from video script
+  async function generateManimCode(videoScript: any) {
+    const model = getModel();
+    
+    const prompt = `Generate complete, runnable Manim Python code for this video script:
+
+Title: ${videoScript.title}
+Total Duration: ${videoScript.totalDuration} seconds
+Number of Sections: ${videoScript.sections.length}
+
+Sections:
+${videoScript.sections.map((section: any, i: number) => `
+SECTION ${i + 1}: ${section.title}
+Content: ${section.content}
+Visuals: ${section.visuals}
+Captions: ${section.captions}
+Narration: ${section.narration}
+`).join('\n')}
+
+Requirements:
+1. Create a complete Python file with proper Manim imports
+2. Use a single Scene class that implements all sections
+3. Include smooth transitions between sections (use self.wait() appropriately)
+4. Create all mathematical equations using MathTex
+5. Include graphs, charts, and diagrams as described in the visuals
+6. Add text captions and titles using Text() objects
+7. Use colors and animations to make it engaging
+8. Follow Manim best practices and syntax
+9. Each section should run for approximately 30 seconds
+10. Include proper scene cleanup between sections
+11. IMPORTANT: when one piece of text appears, it should disappear before the next piece comes or should not overlap it if both are to be on the screen at the same time. also make sure that text doesn't overlap graphs, diagrams, or equations AT ALL. if both are on the screen at the same time, move the text to an appropriate position so that it's completely unoverlapped by any other elements. ALSO MAKE SURE EVERYTHING IS CONTAINED WITHIN THE VIDEO'S DIMENSIONS
+The code should be complete and runnable with: manim -pql filename.py SceneName
+
+Template structure:
+\`\`\`python
+from manim import *
+import numpy as np
+
+class ${videoScript.title.replace(/[^a-zA-Z0-9]/g, '')}Video(Scene):
+    def construct(self):
+        # Title screen
+        title = Text("${videoScript.title}", font_size=48, color=BLUE)
+        self.play(Write(title))
+        self.wait(2)
+        self.play(FadeOut(title))
+        
+        # Section 1: [Implementation based on script]
+        # Example of correct syntax:
+        # axes = Axes(x_range=[-3, 3], y_range=[-2, 2])
+        # func = axes.plot(lambda x: x**2, color=BLUE)
+        # tracker = ValueTracker(1)
+        # dot = Dot().add_updater(lambda m: m.move_to(axes.c2p(tracker.get_value(), tracker.get_value()**2)))
+        # self.play(Create(axes), Create(func))
+        # self.play(tracker.animate.set_value(2), run_time=3)
+        
+        # Section 2: [Implementation based on script]
+        # ... continue for all sections
+        
+        # End screen
+        end_text = Text("Thank you for watching!", font_size=36)
+        self.play(Write(end_text))
+        self.wait(3)
+\`\`\`
+
+WORKING ANIMATION EXAMPLES:
+1. Moving a dot along a curve:
+   tracker = ValueTracker(0)
+   dot = Dot()
+   dot.add_updater(lambda m: m.move_to(axes.c2p(tracker.get_value(), np.sin(tracker.get_value()))))
+   self.play(tracker.animate.set_value(TAU), run_time=4)
+
+2. Animating function parameters:
+   a_tracker = ValueTracker(1)
+   func = always_redraw(lambda: axes.plot(lambda x: a_tracker.get_value() * x**2, color=BLUE))
+   self.play(a_tracker.animate.set_value(3), run_time=2)
+
+3. Moving objects:
+   circle = Circle()
+   self.play(circle.animate.move_to(RIGHT * 2))
+
+Generate the complete implementation for each section based on the provided script. Use appropriate Manim objects:
+- Text() for titles and captions
+- MathTex() for mathematical formulas  
+- Axes() and plot functions for coordinate systems and graphs
+- Circle(), Rectangle(), Polygon() for shapes
+- NumberLine() for number representations
+- Transform(), Write(), FadeIn(), FadeOut() for animations
+- Line(), Arrow(), Dot() for basic geometric elements
+- VGroup() to group multiple objects together
+
+IMPORTANT: NEVER use external files! Create all visuals using Manim's built-in objects:
+- Instead of ImageMobject("file.png"), use Circle(), Rectangle(), Polygon(), or other built-in shapes
+- Instead of SVGMobject("file.svg"), use combinations of built-in geometric objects
+- All visuals must be created using only Manim's primitive objects and mathematical functions
+- You can combine multiple simple shapes to create complex diagrams
+- Use colors, fills, and positioning to make shapes representative of the concepts
+
+IMPORTANT: MAKE SURE ALL ELEMENTS AND TEXT IN TEH VIDEO ARE CONTAINED WITHIN IT'S DIMENSIONS. IT IS IMPERATIVE TO NOT HAVE TEXT OR DIAGRAMS OVERFLOWING BEYOND THE EDGES OF THE VIDEO.
+IMPORTANT: MAKE STUFF DISAPPEAR BEFORE PUTTING NEW STUFF. DON'T PLACE GRAPHS AND DIAGRAMS AND NUMBERS ON TOP OF EACH OTHER AT THE SAME TIME. AFTER ONE HAS BEEN USED, MAKE IT DISAPPEAR AND MAKE THEM APPEAR ONE BY ONE, NOT ALL AT ONCE.
+
+CRITICAL MANIM SYNTAX RULES (Community v0.19.0):
+- For plotting functions, use: axes.plot(lambda x: np.sin(x), x_range=[-3, 3], color=BLUE)
+- For parametric plots, use: ParametricFunction(lambda t: [t, np.sin(t), 0], t_range=[-3, 3])
+- DO NOT use Graph() class with x_range parameter - this is incorrect syntax
+- For unit circles and trig functions, use Circle() and plot() methods
+- For animating values, use ValueTracker: tracker = ValueTracker(0), then tracker.animate.set_value(3)
+- DO NOT try to animate plain numbers or integers - they have no animate attribute
+- For moving objects, use: obj.animate.move_to(point) or obj.animate.shift(vector)
+- For transforming objects, use: Transform(obj1, obj2) or ReplacementTransform(obj1, obj2)
+- Always create Manim objects (ValueTracker, Dot, Line, etc.) before trying to animate them
+- Always use proper Manim Community v0.19.0 syntax
+- For LaTeX strings, ALWAYS use r-strings: MathTex(r"\\sin(x)") not MathTex("\\sin(x)")
+- VALID positioning methods: .to_edge(UP), .to_corner(UL), .next_to(obj, RIGHT), .move_to(ORIGIN), .shift(UP)
+- INVALID methods: .to_center(), .move_along_path(), .center() - these don't exist
+
+FORBIDDEN CODE PATTERNS - NEVER WRITE THESE:
+❌ a = 2; a.animate.set_value(3)  # WRONG: 'a' is integer, not ValueTracker
+❌ h_val = 1; h_val.animate.set_value(0.5)  # WRONG: 'h_val' is integer, not ValueTracker  
+❌ x_val = 1; x_val.animate.set_value(2)  # WRONG: 'x_val' is integer, not ValueTracker
+❌ ImageMobject("any_file.png")  # WRONG: External image files don't exist
+❌ SVGMobject("any_file.svg")  # WRONG: External SVG files don't exist
+❌ ImageMobject("rutherford_experiment.png")  # WRONG: Image files are not available
+❌ dot.animate.move_along_path(circle)  # WRONG: move_along_path doesn't exist
+❌ obj.to_center()  # WRONG: to_center doesn't exist, use .move_to(ORIGIN)
+❌ MathTex("y = \\sin(x)")  # WRONG: Single backslash causes escape sequence error
+❌ MathTex("\\pi")  # WRONG: Single backslash causes escape sequence error
+
+CORRECT CODE PATTERNS - ALWAYS USE THESE:
+✅ a_tracker = ValueTracker(2); a_tracker.animate.set_value(3)  # CORRECT
+✅ h_tracker = ValueTracker(1); h_tracker.animate.set_value(0.5)  # CORRECT
+✅ x_tracker = ValueTracker(1); x_tracker.animate.set_value(2)  # CORRECT
+✅ Circle(radius=0.5, color=RED, fill_opacity=1)  # CORRECT: Use built-in shapes
+✅ Rectangle(width=2, height=1, color=BLUE)  # CORRECT: Use built-in shapes
+✅ Polygon([0,0,0], [1,0,0], [0.5,1,0], color=GREEN)  # CORRECT: Use built-in shapes
+✅ obj.animate.move_to(ORIGIN)  # CORRECT: Use move_to for positioning
+✅ obj.animate.shift(RIGHT*2)  # CORRECT: Use shift for relative movement
+✅ MathTex(r"y = \\sin(x)")  # CORRECT: Use r-string for LaTeX with double backslash
+✅ MathTex(r"\\pi")  # CORRECT: Use r-string for LaTeX symbols
+✅ MathTex(r"\\frac{1}{2}")  # CORRECT: Use r-string for LaTeX fractions
+
+If you need to animate a changing value, ALWAYS use ValueTracker, never plain numbers.
+
+Make sure ALL code is syntactically correct and follows current Manim conventions.
+
+SUMMARY:
+You'll receive a complete script. Your job is to generate fully functional Manim (Python) code that mirrors every line of that script—verbatim—using on-screen text and visuals. Follow these rules exactly:
+
+1. **Exact text only.** Every word of the script that appears on screen must match character for character. No paraphrasing or editing. make sure that stuff is not overlayed on top of other stuff. 
+IMPORTANT: when one piece of text appears, it should disappear before the next piece comes or should not overlap it if both are to be on the screen at the same time. also make sure that text doesn't overlap graphs, diagrams, or equations AT ALL. if both are on the screen at the same time, move the text to an appropriate position so that it's completely unoverlapped by any other elements. ALSO MAKE SURE EVERYTHING IS CONTAINED WITHIN THE VIDEO'S DIMENSIONS
+2. **Visualize only what's described.** Whenever the script mentions a shape, graph, mathematical object, or concept, show a matching Manim primitive (e.g., Circle(), Line(), NumberPlane()); if it doesn't, simply display the script text with Text() or Tex(). 
+3. **No added assumptions.** If something is ambiguous or unspecified, skip inventing visuals—just render the original text.
+4. **Well-structured, runnable code.** Provide a single Python file with all imports ('from manim import *'), a Scene subclass, and clear comments tying each code block to its script lines. It must run without errors in a standard ManimCE setup.
+5. **Timing and layout.** Honor any timestamps with 'wait()', keep text legible for a 16:9 video, and space objects to avoid overlap.
+6. **No extras.** Do not include commentary, reasoning, or any content not explicitly in the script.
+7. Make sure that all text and graphics are completely visible in the video area.
+8. Add visuals wherever possible to illustrate the concepts in the script, but do not add any extra content that is not in the script. Make sure these visuals are appropriately positioned and sized for clarity.
+9. **NO EXTERNAL FILES**: Never use ImageMobject(), SVGMobject(), or any file loading functions. Create all visuals using only Manim's built-in geometric objects (Circle, Rectangle, Polygon, Line, Arrow, Dot, etc.). Combine simple shapes to create complex diagrams.
+10. **Precise timing control:** When timestamps appear in the script (like "[0:08]"), implement precise scene transitions. At each timestamp:
+   a. Clear previous elements with appropriate FadeOut animations
+   b. Introduce new content with suitable animations (Write, FadeIn, etc.)
+   c. Use wait() calls to maintain exact timing between timestamps
+   d. Ensure smooth transitions between sections while strictly adhering to the timestamp progression
+   e. For mathematical concepts introduced at specific timestamps, time their appearance to match exactly when mentioned
+11. The video should be finished when the final timestamp is reached, with all elements cleared.
+Your output should be a complete, clean, executable Manim script that faithfully and exactly represents the input, with just enough visuals to illustrate what the script names.
+
+****** IMPORTANT *******
+# instead of
+curve = plane.get_graph(curve_func, t_range=[-4.5, 4.5], color=YELLOW, stroke_width=4)
+
+# do this:
+curve = plane.plot(
+    curve_func,
+    x_range=[-4.5, 4.5],
+    color=YELLOW,
+    stroke_width=4
+)
+
+CRITICAL LaTeX FORMATTING RULES:
+- ALWAYS use r-strings for LaTeX: MathTex(r"\\sin(x)") NOT MathTex("\\sin(x)")
+- Double backslashes in r-strings: r"\\pi", r"\\sin", r"\\cos", r"\\frac{1}{2}"
+- Common LaTeX symbols: r"\\pi", r"\\theta", r"\\alpha", r"\\beta", r"\\infty"
+- Fractions: r"\\frac{numerator}{denominator}"
+- Subscripts: r"x_1", r"a_n"
+- Superscripts: r"x^2", r"e^{\\pi i}"
+- Functions: r"\\sin(x)", r"\\cos(\\theta)", r"\\tan(\\alpha)"
+
+EXAMPLE CORRECT LaTeX:
+- MathTex(r"y = \\sin(x)")
+- MathTex(r"\\frac{d}{dx}[\\sin(x)] = \\cos(x)")
+- MathTex(r"\\pi \\approx 3.14159")
+- MathTex(r"e^{i\\pi} + 1 = 0")
+
+IMPORTANT: Provide ONLY the complete Python code with no explanations, comments outside the code, or markdown formatting. Just the raw Python code that can be directly saved to a file and executed.
+`;
+
+    const result = await model.generateContent(prompt);
+    let manimCode = result.response.text();
+    
+    // Clean up the code if it has markdown formatting
+    if (manimCode.includes('```python')) {
+      const codeMatch = manimCode.match(/```python\n([\s\S]*?)\n```/);
+      if (codeMatch) {
+        manimCode = codeMatch[1];
+      }
+    } else if (manimCode.includes('```')) {
+      const codeMatch = manimCode.match(/```\n([\s\S]*?)\n```/);
+      if (codeMatch) {
+        manimCode = codeMatch[1];
+      }
+    }
+    
+    return manimCode;
+  }
+
+  // Render video using Manim backend service
+  async function renderVideo(manimCode: string, topic: string) {
+    const fileName = topic.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    // Call backend to render video
+    const response = await fetch('http://localhost:5001/api/render-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        manimCode,
+        fileName,
+        topic
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to render video');
+    }
+    
+    const result = await response.json();
+    return result;
+  }
+
   // Render message content with HTML support
   const renderMessageContent = (content: string) => {
     return (
@@ -671,6 +1232,11 @@ When creating diagrams, keep them simple and avoid complex styling that might ca
           </button>
         </div>
         <p className="text-xs text-gray-600 mt-1">Full note management & LaTeX support</p>
+      </div>
+
+      {/* File Selector */}
+      <div className="p-4 border-b border-gray-200">
+        <FileSelector onSelect={handleFileSelection} />
       </div>
 
       {/* Quick Actions */}
@@ -746,6 +1312,17 @@ When creating diagrams, keep them simple and avoid complex styling that might ca
           className="w-full mt-1 text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition-colors"
         >
           🎨 Create Complex Diagram
+        </button>
+        {/* Video Lesson Mode Toggle button */}
+        <button
+          onClick={toggleVideoMode}
+          className={`w-full mt-1 text-xs px-2 py-1 rounded transition-colors ${
+            isVideoMode 
+              ? 'bg-teal-500 text-white shadow-md' 
+              : 'bg-teal-100 text-teal-700 hover:bg-teal-200'
+          }`}
+        >
+          🎥 {isVideoMode ? 'Video Mode Active' : 'Create Video Lesson'}
         </button>
       </div>
 

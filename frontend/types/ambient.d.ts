@@ -25,7 +25,7 @@ declare module 'function-plot' {
   export default functionPlot;
 }
 
-declare module 'smiles-drawer' {
-  const SmilesDrawer: any;
-  export default SmilesDrawer;
+// Optional OpenChemLib if loaded via script tag/CDN at runtime
+declare global {
+  interface Window { OCL?: any }
 }

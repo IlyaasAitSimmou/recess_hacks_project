@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>make a video on derivatives of trig functions</title>
+    <style>
+        body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .video-placeholder {
+            max-width: 800px;
+            background: rgba(255,255,255,0.1);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+        }
+        h1 { color: #fff; margin-bottom: 20px; }
+        .manim-code { 
+            background: rgba(0,0,0,0.3); 
+            padding: 15px; 
+            border-radius: 5px; 
+            white-space: pre-wrap; 
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin: 20px 0;
+        }
+        .error { color: #ffeb3b; margin: 10px 0; }
+        .instruction { 
+            color: #81c784; 
+            font-style: italic; 
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="video-placeholder">
+        <h1>🎬 make a video on derivatives of trig functions</h1>
+        <p class="error">⚠️ Video Placeholder (Manim not available)</p>
+        <p class="instruction">To enable real video generation:</p>
+        <ul class="instruction">
+            <li>Install Manim: <code>pip install manim</code></li>
+            <li>Ensure ffmpeg is installed</li>
+            <li>Restart the backend server</li>
+        </ul>
+        <h3>Generated Manim Code:</h3>
+        <div class="manim-code">from manim import *
+import numpy as np
+
+class TrigDerivativesVideo(Scene):
+    def construct(self):
+        # Title screen
+        title = Text("Derivatives of Trig Functions", font_size=48, color=BLUE)
+        self.play(Write(title))
+        self.wait(2)
+        self.play(FadeOut(title))
+
+        # Section 1: Introduction
+        unit_circle = Circle(radius=1, color=YELLOW)
+        unit_circle.set_fill(YELLOW, opacity=0.5)
+        axes = Axes(x_range=(-1.5, 1.5), y_range=(-1.5, 1.5))
+        dot = Dot(color=RED)
+        self.play(Create(axes), Create(unit_circle))
+        self.play(FadeIn(dot))
+        self.play(dot.animate.move_to(unit_circle.point_at_angle(0)))
+        self.wait(1)
+        self.play(dot.animate.move_along_path(unit_circle, rate_func=linear, run_time=5))
+        
+        sin_graph = axes.plot(lambda x: np.sin(x), color=BLUE)
+        cos_graph = axes.plot(lambda x: np.cos(x), color=GREEN)
+        sin_label = MathTex(r"\sin(x)", color=BLUE).next_to(sin_graph.get_end(), UP)
+        cos_label = MathTex(r"\cos(x)", color=GREEN).next_to(cos_graph.get_end(), UP)
+
+        self.play(FadeOut(unit_circle), FadeOut(dot), Create(sin_graph), Create(cos_graph),Write(sin_label), Write(cos_label))
+        intro_text = Text("Welcome! Today, we'll explore the derivatives of trigonometric functions.  The x and y coordinates of the unit circle give us cos(x) and sin(x). Now, let's see how their rates of change behave.").scale(0.7)
+        self.play(Write(intro_text))
+        self.wait(5)
+        self.play(FadeOut(intro_text), FadeOut(sin_label), FadeOut(cos_label), FadeOut(sin_graph), FadeOut(cos_graph),FadeOut(axes))
+
+
+        # Section 2: Derivative of sin(x)
+        axes2 = Axes(x_range=(-3,3), y_range=(-1.5,1.5))
+        sin_graph2 = axes2.plot(lambda x: np.sin(x), color=BLUE)
+        limit_def = MathTex(r"\lim_{h \to 0} \frac{\sin(x+h) - \sin(x)}{h}", color=YELLOW)
+        derivative_sin = MathTex(r"\frac{d}{dx} \sin(x) = \cos(x)", color=GREEN)
+        self.play(Create(axes2), Create(sin_graph2))
+        self.play(Write(limit_def))
+        self.wait(3)
+        self.play(Transform(limit_def, derivative_sin))
+        self.wait(12)
+        self.play(FadeOut(axes2), FadeOut(sin_graph2), FadeOut(derivative_sin))
+
+
+
+        # Section 3: Derivative of cos(x)
+        axes3 = Axes(x_range=(-3,3), y_range=(-1.5,1.5))
+        cos_graph3 = axes3.plot(lambda x: np.cos(x), color=GREEN)
+        limit_def_cos = MathTex(r"\lim_{h \to 0} \frac{\cos(x+h) - \cos(x)}{h}", color=YELLOW)
+        derivative_cos = MathTex(r"\frac{d}{dx} \cos(x) = -\sin(x)", color=GREEN)
+
+        self.play(Create(axes3), Create(cos_graph3))
+        self.play(Write(limit_def_cos))
+        self.wait(3)
+        self.play(Transform(limit_def_cos, derivative_cos))
+        self.wait(12)
+        self.play(FadeOut(axes3), FadeOut(cos_graph3), FadeOut(derivative_cos))
+
+
+        # Section 4: Derivative of tan(x)
+        axes4 = Axes(x_range=(-3,3), y_range=(-5,5))
+        tan_graph = axes4.plot(lambda x: np.tan(x), color=PURPLE)
+        tan_eq = MathTex(r"\tan(x) = \frac{\sin(x)}{\cos(x)}", color=YELLOW)
+        quotient_rule = MathTex(r"\text{Quotient Rule}", color=YELLOW)
+        derivative_tan = MathTex(r"\frac{d}{dx} \tan(x) = \sec^2(x)", color=GREEN)
+        self.play(Create(axes4), Create(tan_graph))
+        self.play(Write(tan_eq))
+        self.wait(2)
+        self.play(Write(quotient_rule))
+        self.wait(2)
+        self.play(Transform(quotient_rule, derivative_tan))
+        self.wait(12)
+        self.play(FadeOut(axes4), FadeOut(tan_graph), FadeOut(derivative_tan))
+
+
+        # Section 5: Chain Rule
+        chain_rule = MathTex(r"\text{Chain Rule: } \frac{d}{dx} f(g(x)) = f'(g(x))g'(x)", color=YELLOW)
+        example = MathTex(r"\frac{d}{dx} \sin(2x)", color=BLUE)
+        solution = MathTex(r"2\cos(2x)", color=GREEN)
+        self.play(Write(chain_rule))
+        self.wait(2)
+        self.play(Write(example))
+        self.wait(5)
+        self.play(Transform(example, solution))
+        self.wait(10)
+        self.play(FadeOut(chain_rule), FadeOut(solution))
+
+
+        # Section 6: Practice Problem
+        problem = MathTex(r"\text{Practice Problem: Find } \frac{d}{dx} [\cos(x^2) + \tan(3x)]", color=BLUE)
+        solution_text = Text("Solution: (Detailed solution would be animated here)", color=YELLOW)
+        self.play(Write(problem))
+        self.wait(10)
+        self.play(Write(solution_text))
+        self.wait(10)
+        self.play(FadeOut(problem), FadeOut(solution_text))
+
+
+        # Section 7: Summary
+        summary = Table(
+            [[r"\sin(x)", r"\cos(x)", r"\tan(x)"],
+             [r"\cos(x)", r"-\sin(x)", r"\sec^2(x)"]],
+            row_labels=[Text("Function"), Text("Derivative")],
+        )
+        further_exploration = Text("Further Exploration: Higher-order derivatives, implicit differentiation", color=BLUE)
+        self.play(Create(summary))
+        self.wait(5)
+        self.play(Write(further_exploration))
+        self.wait(5)
+        self.play(FadeOut(summary), FadeOut(further_exploration))
+        end_text = Text("Thank you for watching!", font_size=36)
+        self.play(Write(end_text))
+        self.wait(3)
+</div>
+        <p><strong>Error:</strong> Manim not installed</p>
+    </div>
+</body>
+</html>

@@ -35,16 +35,19 @@ A full-stack authentication application with Next.js frontend and Flask backend,
 ### Backend Setup
 
 1. Navigate to the backend directory:
+
    ```bash
    cd backend
    ```
 
 2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **Set up Gemini AI (Optional but recommended)**:
+
    - Get a free API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
    - Set the environment variable:
      ```bash
@@ -62,11 +65,13 @@ The backend will be available at `http://localhost:5001`
 ### Frontend Setup
 
 1. Navigate to the frontend directory:
+
    ```bash
    cd frontend
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install --legacy-peer-deps
    ```
@@ -81,11 +86,13 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 ## API Endpoints
 
 ### Authentication
+
 - `POST /api/signup` - Register a new user
 - `POST /api/login` - Login user
 - `POST /api/logout` - Logout user (requires token)
 
 ### Notes System
+
 - `GET /api/folders` - Get all folders for user
 - `POST /api/folders` - Create a new folder
 - `GET /api/notes` - Get notes (optional folder_id parameter)
@@ -93,9 +100,11 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 - `PUT /api/notes/<id>` - Update a note
 
 ### AI Integration
+
 - `POST /api/ai/chat` - Chat with AI about notes
 
 ### Utility
+
 - `GET /api/health` - Health check
 
 ## Usage
@@ -109,6 +118,7 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 ## Technology Stack
 
 ### Backend
+
 - Flask - Python web framework
 - Flask-CORS - Cross-origin resource sharing
 - PyJWT - JSON Web Token implementation
@@ -116,6 +126,7 @@ The frontend will be available at `http://localhost:3000` or `http://localhost:3
 - hashlib - Password hashing
 
 ### Frontend
+
 - Next.js 15 - React framework
 - TypeScript - Type safety
 - Tailwind CSS - Styling

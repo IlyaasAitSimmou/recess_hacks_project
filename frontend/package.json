@@ -23,7 +23,6 @@
     "fabric": "^6.7.1",
   "katex": "^0.16.22",
   "function-plot": "^1.23.1",
-  "smiles-drawer": "^2.0.3",
     "konva": "^9.3.22",
     "lucide-react": "^0.541.0",
     "mermaid": "^10.9.1",

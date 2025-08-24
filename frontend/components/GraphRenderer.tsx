@@ -37,7 +37,7 @@ export default function GraphRenderer({ graphCode, onRenderComplete }: GraphRend
   const markerIdRef = useRef<string>(`arrowhead-${Math.random().toString(36).slice(2)}`);
   const renderSeqRef = useRef(0);
 
-  // Parse Mermaid-like syntax and convert to Chart.js or D3.js data
+  // Parse diagram-like syntax and convert to Chart.js or D3.js data
   const parseGraphCode = (code: string): GraphData | null => {
     try {
       const lines = code
@@ -65,19 +65,13 @@ export default function GraphRenderer({ graphCode, onRenderComplete }: GraphRend
         return parsePieChart(lines);
       } else if (/^plot\b|^math\b/i.test(headerLine)) {
         return parsePlotDiagram(lines);
-  } else if (/^chem\b|^chemistry\b|^smiles\b/i.test(headerLine)) {
+  } else if (/^chem\b|^chemistry\b/i.test(headerLine)) {
         return parseChemDiagram(lines);
       } else if (/^vector\b/i.test(headerLine)) {
         return parseVectorDiagram(lines);
       } else {
-        // Heuristic: if content looks like a raw SMILES string, treat as chemistry
-        const raw = code.trim();
-        const isSingleLine = !raw.includes('\n');
-        const smilesLike = /^[A-Za-z0-9@+\-#=()\\/\[\]]+$/.test(raw) && /[cCnNOPSFI0-9=()]/.test(raw);
-        if (isSingleLine && smilesLike && raw.length <= 200) {
-          return { type: 'chemistry', data: { smiles: raw } };
-        }
-        // Default to flowchart
+        // Default to flowchart for anything not explicitly recognized.
+        // Chemistry MUST be explicitly indicated with a 'chem' or 'chemistry' header
         return parseFlowchart(lines);
       }
     } catch (err) {
@@ -419,157 +413,105 @@ export default function GraphRenderer({ graphCode, onRenderComplete }: GraphRend
     }
   };
 
-  // Parse chemistry diagram (SMILES)
+  // Parse chemistry diagram (name or formula)
   const parseChemDiagram = (lines: string[]): GraphData => {
-    // Expect a line like: smiles: C1=CC=CC=C1 (benzene)
-    let smiles: string | null = null;
-    const alias: Record<string, string> = {
-      benzene: 'c1ccccc1',
-      water: 'O',
-      ethanol: 'CCO',
-      methanol: 'CO',
-      acetone: 'CC(=O)C',
-      glucose: 'OC[C@H]1O[C@@H](O)[C@H](O)[C@@H](O)[C@H]1O' // rough; for demo
-    };
+    let query: string | null = null;
     for (const raw of lines) {
-      let line = raw.trim();
-      // Skip only the top-level header and comments, not the 'smiles:' definition line
-  if (!line || /^chem\b/i.test(line) || /^chemistry\b/i.test(line) || /^smiles\b$/i.test(line) || /^%%/.test(line)) continue;
-      // Drop trailing comments in parentheses or after '#'
-      line = line.replace(/#.*/, '').replace(/\([^)]*\)$/, '').trim();
-      const m = line.match(/smiles\s*:\s*(.+)$/i);
-      if (m) { smiles = m[1].trim(); break; }
-      if (!smiles) smiles = line; // treat bare first non-header as SMILES
+      const line = raw.trim();
+      if (!line || /^chem(istry)?\b/i.test(line) || /^%%/.test(line)) continue;
+      // Accept either a plain name/formula line or a key:value like name:, formula:
+      const kv = line.match(/^(name|formula)\s*:\s*(.+)$/i);
+      if (kv) { query = kv[2].trim(); break; }
+      if (!query) query = line; // first non-header line
     }
-    if (smiles) {
-      smiles = smiles.replace(/^['"]|['"]$/g, '').trim();
-      const key = smiles.toLowerCase();
-      if (alias[key]) smiles = alias[key];
-    }
-    return { type: 'chemistry', data: { smiles } };
+    query = (query || '').replace(/^["']|["']$/g, '').trim();
+    return { type: 'chemistry', data: { query } };
   };
 
-  // Render chemistry using smiles-drawer (prefer Canvas to avoid null sizing issues)
-  const renderChemistry = async (data: { smiles: string }, seq: number) => {
+  // Render chemistry via image depiction (no SMILES parsing). Tries OpenChemLib if present; else NIH Cactus image.
+  const renderChemistry = async (data: { query: string }, seq: number) => {
     if (!containerRef.current) return;
-    const container = containerRef.current;
-    container.innerHTML = '';
-    // Ensure the container has dimensions for any SVG sizing logic
-    container.style.minWidth = container.style.minWidth || '800px';
-    container.style.minHeight = container.style.minHeight || '480px';
-    try {
-      const mod: any = await import('smiles-drawer');
-      const SD: any = mod?.default || mod;
-      const parseFn: any = SD?.parse || SD?.Parser?.parse;
-      if (!parseFn) {
-        const div = document.createElement('div');
-        div.style.color = '#c33';
-        div.textContent = 'Chemistry renderer not ready (parse missing). Check smiles-drawer version.';
-        container.appendChild(div);
-        console.error('smiles-drawer exports:', Object.keys(SD || {}));
+    // Clear any previous content (if this instance still owns a live container)
+    if (containerRef.current.isConnected) {
+      containerRef.current.innerHTML = '';
+      // Ensure the container has dimensions for any SVG sizing logic
+      containerRef.current.style.minWidth = containerRef.current.style.minWidth || '800px';
+      containerRef.current.style.minHeight = containerRef.current.style.minHeight || '480px';
+    }
+  // Always use image/SVG fallback first (names or formulas only)
+  chemistryImageFallback(data.query);
+  };
+
+  // Fallback: render a PNG/SVG from external depiction service (no API key; client-side image)
+  function chemistryImageFallback(query?: string | null) {
+    const target = containerRef.current;
+    if (!target || !target.isConnected) return;
+    target.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.style.width = '800px';
+    wrapper.style.height = '480px';
+    wrapper.style.display = 'flex';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.justifyContent = 'center';
+    wrapper.style.background = '#fff';
+    target.appendChild(wrapper);
+    const txt = (query || '').trim();
+    if (!txt) {
+      const p = document.createElement('div');
+      p.style.color = '#c33';
+      p.textContent = 'No chemistry input provided.';
+      wrapper.appendChild(p);
+      return;
+    }
+
+  // Only use NIH Cactus (external depiction) for chemistry images. OpenChemLib SMILES parsing removed.
+
+    // Try NIH Cactus service with SVG, then PNG. If both fail, show a fallback link and the raw query text.
+  const svgUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(txt)}/image?format=svg&width=800&height=480`;
+    const pngUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(txt)}/image?format=png&width=800&height=480`;
+
+    const img = document.createElement('img');
+    img.alt = `Chemical depiction for ${txt}`;
+    img.width = 800;
+    img.height = 480;
+    img.style.objectFit = 'contain';
+    img.style.background = '#fff';
+    let attemptedPng = false;
+    img.onload = () => {
+      wrapper.innerHTML = '';
+      wrapper.appendChild(img);
+    };
+    img.onerror = () => {
+      if (!attemptedPng) {
+        attemptedPng = true;
+        img.src = pngUrl;
         return;
       }
-      if (seq !== renderSeqRef.current) return;
+      // Both image attempts failed - show helpful fallback with a link to the NIH Cactus page
+      wrapper.innerHTML = '';
+      const msg = document.createElement('div');
+      msg.style.textAlign = 'center';
+      msg.style.color = '#333';
+      msg.style.maxWidth = '700px';
+      msg.innerHTML = `<div style="margin-bottom:12px;">Unable to fetch structure image for <strong>${escapeHtml(txt)}</strong>.</div>
+        <div style="margin-bottom:8px;"><a href="https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(txt)}/image" target="_blank" rel="noopener noreferrer" style="color:#0366d6; text-decoration:underline;">Open depiction on NIH Cactus</a></div>
+        <div style="font-size:12px; color:#666;">If you provided a common name or formula, try alternate names (e.g., <em>benzene</em>, <em>phenol</em>, <em>H2O</em>).</div>`;
+      wrapper.appendChild(msg);
+    };
+    // Kick off with SVG
+    img.src = svgUrl;
+  }
 
-      const WIDTH = 800;
-      const HEIGHT = 480;
-
-      const drawWithCanvas = (tree: any) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = WIDTH;
-        canvas.height = HEIGHT;
-        canvas.style.background = '#ffffff';
-        const cid = 'chem-canvas-' + Math.random().toString(36).slice(2);
-        canvas.id = cid;
-        container.appendChild(canvas);
-        const CanvasDrawer = SD?.CanvasDrawer || SD?.Drawer; // fallback to Drawer
-        const drawer = new CanvasDrawer({ width: WIDTH, height: HEIGHT, padding: 10, compactDrawing: true });
-        try { (drawer as any).draw(tree, cid, 'light'); }
-        catch { (drawer as any).draw(tree, canvas, 'light'); }
-      };
-
-      const drawWithSvg = (tree: any) => {
-        const host = document.createElement('div');
-        host.style.width = `${WIDTH}px`;
-        host.style.height = `${HEIGHT}px`;
-        const hid = 'chem-host-' + Math.random().toString(36).slice(2);
-        host.id = hid;
-        container.appendChild(host);
-        const SvgDrawer = SD?.SvgDrawer || SD?.Drawer; // fallback to Drawer
-        const drawer = new SvgDrawer({ width: WIDTH, height: HEIGHT, padding: 10, compactDrawing: true });
-        try { (drawer as any).draw(tree, hid, 'light'); }
-        catch { (drawer as any).draw(tree, host, 'light'); }
-      };
-
-      const tryParseAndDraw = (smilesStr: string, attemptedFallback = 0) => {
-        if (!smilesStr || !smilesStr.trim()) {
-          const div = document.createElement('div');
-          div.style.color = '#c33';
-          div.textContent = 'No SMILES provided.';
-          container.appendChild(div);
-          return;
-        }
-        parseFn(
-          smilesStr,
-          (tree: any) => {
-            const doDraw = () => {
-              if (seq !== renderSeqRef.current) return;
-              // Try static convenience API first if available (handles parse+draw internally)
-              try {
-                if (typeof SD?.draw === 'function') {
-                  const cid = 'chem-canvas-' + Math.random().toString(36).slice(2);
-                  const c = document.createElement('canvas');
-                  c.id = cid; c.width = WIDTH; c.height = HEIGHT; c.style.background = '#ffffff';
-                  container.appendChild(c);
-                  SD.draw(smilesStr, cid, 'light');
-                  return;
-                }
-              } catch (e0) {
-                console.warn('Static SD.draw failed, falling back to manual drawers...', e0);
-              }
-              // Try canvas first as it is most stable across environments
-              try { drawWithCanvas(tree); return; } catch (e1) { console.warn('Canvas draw failed, trying SVG...', e1); }
-              try { drawWithSvg(tree); return; } catch (e2) {
-                const msg = (e2 as any)?.message || 'Unknown error';
-                const errDiv = document.createElement('div');
-                errDiv.style.color = '#c33';
-                errDiv.textContent = `Chemistry render failed. ${msg}`.trim();
-                container.appendChild(errDiv);
-                console.error('SmilesDrawer draw error:', e2);
-              }
-            };
-            if (typeof window !== 'undefined' && 'requestAnimationFrame' in window) {
-              requestAnimationFrame(doDraw);
-            } else {
-              setTimeout(doDraw, 0);
-            }
-          },
-          (parseErr: any) => {
-            if (attemptedFallback < 2) {
-              const once = smilesStr.replace(/C1=CC=CC=C1/g, 'c1ccccc1').replace(/\s+/g, '');
-              if (once !== smilesStr) {
-                tryParseAndDraw(once, attemptedFallback + 1);
-                return;
-              }
-            }
-            const div = document.createElement('div');
-            div.style.color = '#c33';
-            div.textContent = `Failed to parse SMILES. ${parseErr?.message || ''}`.trim();
-            container.appendChild(div);
-            console.error('SmilesDrawer parse error:', parseErr);
-          }
-        );
-      };
-
-      tryParseAndDraw(data.smiles);
-    } catch (e) {
-      const div = document.createElement('div');
-      div.style.color = '#c33';
-      div.textContent = `Chemistry renderer not available. ${(e as any)?.message || ''}`.trim();
-      container.appendChild(div);
-      console.error('Failed to load smiles-drawer:', e);
-    }
-  };
+  // Small helper to escape HTML when inserting fallback messages
+  function escapeHtml(s: string) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    } as any)[c]);
+  }
 
   // Parse simple vector diagram
   // Syntax:

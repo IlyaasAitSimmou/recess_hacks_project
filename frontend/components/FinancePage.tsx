@@ -1,20 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { DollarSign, TrendingUp, Target, ShoppingCart, PlusCircle, AlertCircle, BookOpen, Coffee, Car, Home, Calendar, Save, TrendingDown, Settings, ArrowRight, User, Wallet, Tag, CheckCircle } from 'lucide-react';
+import { useSupabaseStore } from '../lib/useSupabaseStore'; // Adjust path as needed
 
 const FinancePage = () => {
+  // Get Supabase store functions and data
+  const {
+    loading,
+    session,
+    userProfile,
+    spendingEntries,
+    budgets,
+    createOrUpdateUserProfile,
+    addSpendingEntry: addSpendingEntryToDb,
+    createMultipleBudgets,
+    resetAllFinanceData
+  } = useSupabaseStore();
+
   // Onboarding state
-  const [isOnboarded, setIsOnboarded] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [showSettings, setShowSettings] = useState(false);
 
-  // User profile data
-  const [userProfile, setUserProfile] = useState({
+  // Local onboarding form data
+  const [onboardingProfile, setOnboardingProfile] = useState({
     name: '',
-    monthlyBudget: '',
-    selectedCategories: [],
-    savingsGoal: '',
-    incomeSource: ''
+    monthly_budget: '',
+    selected_categories: [],
+    savings_goal: '',
+    income_source: ''
+  });
+
+  // New entry form state
+  const [newEntry, setNewEntry] = useState({
+    date: new Date().toISOString().split('T')[0],
+    category: '',
+    amount: '',
+    description: ''
   });
 
   // Available categories with icons and descriptions
@@ -29,71 +50,64 @@ const FinancePage = () => {
     { name: 'Personal Care', icon: User, description: 'Haircuts, cosmetics, hygiene', defaultBudget: 60 }
   ];
 
-  // State for spending entries and budgets
-  const [spendingEntries, setSpendingEntries] = useState([]);
-  const [budgets, setBudgets] = useState([]);
-  const [newEntry, setNewEntry] = useState({
-    date: new Date().toISOString().split('T')[0],
-    category: '',
-    amount: '',
-    description: ''
-  });
+  // Check if user is onboarded (has a profile)
+  const isOnboarded = userProfile !== null;
 
-  // Initialize budgets based on selected categories
-  useEffect(() => {
-    if (isOnboarded && userProfile.selectedCategories.length > 0) {
-      const monthlyBudget = parseFloat(userProfile.monthlyBudget) || 1000;
+  // Onboarding functions
+  const handleCategoryToggle = (categoryName) => {
+    const updatedCategories = onboardingProfile.selected_categories.includes(categoryName)
+      ? onboardingProfile.selected_categories.filter(cat => cat !== categoryName)
+      : [...onboardingProfile.selected_categories, categoryName];
+    
+    setOnboardingProfile({ ...onboardingProfile, selected_categories: updatedCategories });
+  };
+
+  const completeOnboarding = async () => {
+    if (onboardingProfile.name && onboardingProfile.monthly_budget && onboardingProfile.selected_categories.length > 0) {
+      // Create user profile
+      await createOrUpdateUserProfile({
+        name: onboardingProfile.name,
+        monthly_budget: parseFloat(onboardingProfile.monthly_budget),
+        selected_categories: onboardingProfile.selected_categories,
+        savings_goal: onboardingProfile.savings_goal ? parseFloat(onboardingProfile.savings_goal) : null,
+        income_source: onboardingProfile.income_source
+      });
+
+      // Create initial budgets
+      const monthlyBudget = parseFloat(onboardingProfile.monthly_budget);
       const weeklyBudget = monthlyBudget / 4.33; // Average weeks per month
       
-      const totalDefaultBudgets = userProfile.selectedCategories.reduce((sum, categoryName) => {
+      const totalDefaultBudgets = onboardingProfile.selected_categories.reduce((sum, categoryName) => {
         const category = availableCategories.find(cat => cat.name === categoryName);
         return sum + (category ? category.defaultBudget : 100);
       }, 0);
 
-      const initialBudgets = userProfile.selectedCategories.map((categoryName, index) => {
+      const initialBudgets = onboardingProfile.selected_categories.map((categoryName) => {
         const category = availableCategories.find(cat => cat.name === categoryName);
-        const proportionalBudget = category ? (category.defaultBudget / totalDefaultBudgets) * weeklyBudget : weeklyBudget / userProfile.selectedCategories.length;
+        const proportionalBudget = category ? (category.defaultBudget / totalDefaultBudgets) * weeklyBudget : weeklyBudget / onboardingProfile.selected_categories.length;
         
         return {
-          id: index + 1,
           category: categoryName,
           budgeted: Math.round(proportionalBudget),
           period: 'weekly',
-          icon: category ? category.icon : Target
+          icon: category ? category.icon.name : 'Target'
         };
       });
       
-      setBudgets(initialBudgets);
-    }
-  }, [isOnboarded, userProfile.selectedCategories, userProfile.monthlyBudget]);
-
-  // Onboarding functions
-  const handleCategoryToggle = (categoryName) => {
-    const updatedCategories = userProfile.selectedCategories.includes(categoryName)
-      ? userProfile.selectedCategories.filter(cat => cat !== categoryName)
-      : [...userProfile.selectedCategories, categoryName];
-    
-    setUserProfile({ ...userProfile, selectedCategories: updatedCategories });
-  };
-
-  const completeOnboarding = () => {
-    if (userProfile.name && userProfile.monthlyBudget && userProfile.selectedCategories.length > 0) {
-      setIsOnboarded(true);
+      await createMultipleBudgets(initialBudgets);
     }
   };
 
-  const resetOnboarding = () => {
-    setIsOnboarded(false);
+  const resetOnboarding = async () => {
+    await resetAllFinanceData();
     setOnboardingStep(1);
-    setUserProfile({
+    setOnboardingProfile({
       name: '',
-      monthlyBudget: '',
-      selectedCategories: [],
-      savingsGoal: '',
-      incomeSource: ''
+      monthly_budget: '',
+      selected_categories: [],
+      savings_goal: '',
+      income_source: ''
     });
-    setSpendingEntries([]);
-    setBudgets([]);
     setShowSettings(false);
   };
 
@@ -107,21 +121,22 @@ const FinancePage = () => {
   // Get current week spending
   const getCurrentWeekSpending = () => {
     const currentWeek = getWeekNumber(new Date());
-    return spendingEntries.filter(entry => entry.week === currentWeek);
+    return spendingEntries.filter(entry => {
+      const entryWeek = getWeekNumber(new Date(entry.date));
+      return entryWeek === currentWeek;
+    });
   };
 
   // Add spending entry
-  const addSpendingEntry = () => {
+  const addSpendingEntry = async () => {
     if (newEntry.category && newEntry.amount && newEntry.date) {
-      const entry = {
-        id: Date.now(),
+      await addSpendingEntryToDb({
         date: newEntry.date,
         category: newEntry.category,
         amount: parseFloat(newEntry.amount),
-        description: newEntry.description || `${newEntry.category} purchase`,
-        week: getWeekNumber(new Date(newEntry.date))
-      };
-      setSpendingEntries([...spendingEntries, entry]);
+        description: newEntry.description || `${newEntry.category} purchase`
+      });
+      
       setNewEntry({
         date: new Date().toISOString().split('T')[0],
         category: '',
@@ -158,10 +173,17 @@ const FinancePage = () => {
       spendingByCategory[entry.category] = (spendingByCategory[entry.category] || 0) + entry.amount;
     });
 
-    return budgets.map(budget => ({
-      ...budget,
-      spent: spendingByCategory[budget.category] || 0
-    }));
+    return budgets.map(budget => {
+      // Find the corresponding icon component
+      const categoryData = availableCategories.find(cat => cat.name === budget.category);
+      const IconComponent = categoryData ? categoryData.icon : Target;
+      
+      return {
+        ...budget,
+        spent: spendingByCategory[budget.category] || 0,
+        icon: IconComponent
+      };
+    });
   };
 
   // Calculate totals
@@ -169,6 +191,36 @@ const FinancePage = () => {
   const totalSpentThisWeek = currentWeekSpending.reduce((sum, entry) => sum + entry.amount, 0);
   const totalBudget = budgets.reduce((sum, budget) => sum + budget.budgeted, 0);
   const remainingBudget = totalBudget - totalSpentThisWeek;
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading your finance data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login prompt if no session
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md text-center">
+          <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <DollarSign className="h-8 w-8 text-blue-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Welcome to Finance Tracker</h2>
+          <p className="text-gray-600 mb-6">Please log in to start tracking your finances</p>
+          <div className="text-sm text-gray-500">
+            Your finance data will be securely stored and synced across all your devices.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Onboarding UI
   if (!isOnboarded) {
@@ -206,16 +258,16 @@ const FinancePage = () => {
                     type="text"
                     placeholder="What's your name?"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-lg"
-                    value={userProfile.name}
-                    onChange={(e) => setUserProfile({...userProfile, name: e.target.value})}
+                    value={onboardingProfile.name}
+                    onChange={(e) => setOnboardingProfile({...onboardingProfile, name: e.target.value})}
                   />
                 </div>
 
                 <div>
                   <select
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-lg"
-                    value={userProfile.incomeSource}
-                    onChange={(e) => setUserProfile({...userProfile, incomeSource: e.target.value})}
+                    value={onboardingProfile.income_source}
+                    onChange={(e) => setOnboardingProfile({...onboardingProfile, income_source: e.target.value})}
                   >
                     <option value="">What's your main income source?</option>
                     <option value="part-time-job">Part-time job</option>
@@ -228,7 +280,7 @@ const FinancePage = () => {
 
                 <button
                   onClick={() => setOnboardingStep(2)}
-                  disabled={!userProfile.name}
+                  disabled={!onboardingProfile.name}
                   className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center"
                 >
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
@@ -255,8 +307,8 @@ const FinancePage = () => {
                     type="number"
                     placeholder="1500"
                     className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-xl font-semibold"
-                    value={userProfile.monthlyBudget}
-                    onChange={(e) => setUserProfile({...userProfile, monthlyBudget: e.target.value})}
+                    value={onboardingProfile.monthly_budget}
+                    onChange={(e) => setOnboardingProfile({...onboardingProfile, monthly_budget: e.target.value})}
                   />
                 </div>
 
@@ -265,8 +317,8 @@ const FinancePage = () => {
                     type="number"
                     placeholder="Monthly savings goal (optional)"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center"
-                    value={userProfile.savingsGoal}
-                    onChange={(e) => setUserProfile({...userProfile, savingsGoal: e.target.value})}
+                    value={onboardingProfile.savings_goal}
+                    onChange={(e) => setOnboardingProfile({...onboardingProfile, savings_goal: e.target.value})}
                   />
                 </div>
 
@@ -279,7 +331,7 @@ const FinancePage = () => {
                   </button>
                   <button
                     onClick={() => setOnboardingStep(3)}
-                    disabled={!userProfile.monthlyBudget}
+                    disabled={!onboardingProfile.monthly_budget}
                     className="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center"
                   >
                     Continue <ArrowRight className="ml-2 h-4 w-4" />
@@ -303,7 +355,7 @@ const FinancePage = () => {
               <div className="grid grid-cols-2 gap-3 mb-6">
                 {availableCategories.map((category) => {
                   const IconComponent = category.icon;
-                  const isSelected = userProfile.selectedCategories.includes(category.name);
+                  const isSelected = onboardingProfile.selected_categories.includes(category.name);
                   
                   return (
                     <div
@@ -341,7 +393,7 @@ const FinancePage = () => {
                 </button>
                 <button
                   onClick={completeOnboarding}
-                  disabled={userProfile.selectedCategories.length === 0}
+                  disabled={onboardingProfile.selected_categories.length === 0}
                   className="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center"
                 >
                   <CheckCircle className="mr-2 h-4 w-4" />
@@ -350,7 +402,7 @@ const FinancePage = () => {
               </div>
 
               <p className="text-sm text-gray-500 text-center mt-4">
-                Selected {userProfile.selectedCategories.length} categories
+                Selected {onboardingProfile.selected_categories.length} categories
               </p>
             </div>
           )}
@@ -382,17 +434,17 @@ const FinancePage = () => {
                 <div className="space-y-4">
                   <div className="p-4 bg-gray-50 rounded-lg">
                     <p className="font-medium text-gray-900">Name: {userProfile.name}</p>
-                    <p className="text-gray-600">Monthly Budget: ${userProfile.monthlyBudget}</p>
-                    <p className="text-gray-600">Income Source: {userProfile.incomeSource}</p>
-                    {userProfile.savingsGoal && (
-                      <p className="text-gray-600">Savings Goal: ${userProfile.savingsGoal}</p>
+                    <p className="text-gray-600">Monthly Budget: ${userProfile.monthly_budget}</p>
+                    <p className="text-gray-600">Income Source: {userProfile.income_source}</p>
+                    {userProfile.savings_goal && (
+                      <p className="text-gray-600">Savings Goal: ${userProfile.savings_goal}</p>
                     )}
                   </div>
                   
                   <div>
                     <h4 className="font-medium text-gray-900 mb-2">Active Categories:</h4>
                     <div className="flex flex-wrap gap-2">
-                      {userProfile.selectedCategories.map(cat => (
+                      {userProfile.selected_categories?.map(cat => (
                         <span key={cat} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
                           {cat}
                         </span>
@@ -416,7 +468,7 @@ const FinancePage = () => {
                   <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                     <h4 className="font-medium text-yellow-800 mb-2">⚠️ Reset Warning</h4>
                     <p className="text-sm text-yellow-700">
-                      This will delete all your spending entries, budgets, and profile data. 
+                      This will delete all your spending entries, budgets, and profile data from the database. 
                       You'll need to go through setup again.
                     </p>
                   </div>
@@ -466,7 +518,7 @@ const FinancePage = () => {
               onChange={(e) => setNewEntry({...newEntry, category: e.target.value})}
             >
               <option value="">Select Category</option>
-              {userProfile.selectedCategories.map(cat => (
+              {userProfile.selected_categories?.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
               ))}
             </select>
@@ -541,7 +593,7 @@ const FinancePage = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Monthly Budget</p>
-                <p className="text-2xl font-semibold text-gray-900">${userProfile.monthlyBudget}</p>
+                <p className="text-2xl font-semibold text-gray-900">${userProfile.monthly_budget}</p>
               </div>
             </div>
           </div>
@@ -683,20 +735,20 @@ const FinancePage = () => {
         </div>
 
         {/* Savings Goal Progress */}
-        {userProfile.savingsGoal && (
+        {userProfile.savings_goal && (
           <div className="mt-8 bg-gradient-to-r from-green-50 to-blue-50 p-6 rounded-lg border">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Savings Goal Progress</h3>
                 <p className="text-gray-600">
-                  Monthly Goal: ${userProfile.savingsGoal} | 
+                  Monthly Goal: ${userProfile.savings_goal} | 
                   Potential Savings This Week: ${remainingBudget > 0 ? remainingBudget.toFixed(2) : '0.00'}
                 </p>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-bold text-green-600">
-                  {remainingBudget > 0 && userProfile.savingsGoal ? 
-                    Math.min(100, Math.round((remainingBudget * 4.33 / parseFloat(userProfile.savingsGoal)) * 100)) : 0}%
+                  {remainingBudget > 0 && userProfile.savings_goal ? 
+                    Math.min(100, Math.round((remainingBudget * 4.33 / parseFloat(userProfile.savings_goal)) * 100)) : 0}%
                 </div>
                 <p className="text-sm text-gray-500">On track</p>
               </div>
