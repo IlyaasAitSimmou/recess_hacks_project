@@ -8,7 +8,6 @@ import AIChatbot from '../../components/AIChatbot';
 import FinancePage from '../../components/FinancePage';
 import GroceryPage from '../dashboard/grocery/page';
 import VolunteerTrackerPage from '../../components/VolunteerTrackerPage';
-import { notesStore } from '@/lib/notesStore';
 
 interface Note {
   id: number;
@@ -17,6 +16,13 @@ interface Note {
   folder_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+interface Folder {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  created_at: string;
 }
 
 // For compatibility with NotesExplorer that expects string IDs
@@ -37,6 +43,11 @@ export default function Dashboard() {
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [isChatbotOpen, setIsChatbotOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  
+  // Add states for all notes and folders
+  const [allNotes, setAllNotes] = useState<Note[]>([]);
+  const [allFolders, setAllFolders] = useState<Folder[]>([]);
+  
   const router = useRouter();
 
   useEffect(() => {
@@ -45,7 +56,43 @@ export default function Dashboard() {
     const userEmail = localStorage.getItem('email');
     
     if (!token) {
-      router.push('/login');
+      router.push('/');
+      return;
+    }
+
+    setEmail(userEmail || '');
+    setLoading(false);
+    
+    // Fetch all notes and folders for AI context
+    fetchAllData();
+  }, [router]);
+
+  const fetchAllData = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      // Fetch notes
+      const notesResponse = await fetch('http://localhost:5001/api/notes', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      // Fetch folders
+      const foldersResponse = await fetch('http://localhost:5001/api/folders', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (notesResponse.ok && foldersResponse.ok) {
+        const notesData = await notesResponse.json();
+        const foldersData = await foldersResponse.json();
+        
+        setAllNotes(notesData.notes || []);
+        setAllFolders(foldersData.folders || []);
+      }
+    } catch (error) {
+      console.error('Error fetching all data:', error);
+    }
+  };
       return;
     }
 
@@ -64,22 +111,20 @@ export default function Dashboard() {
 
   const handleSaveNote = (content: string) => {
     if (currentNote) {
-  notesStore.updateNote(currentNote.id, { content });
-  const fresh = notesStore.findNoteById(currentNote.id);
-  if (fresh) setCurrentNote(fresh);
+      setCurrentNote({
+        ...currentNote,
+        content: content,
+        updated_at: new Date().toISOString()
+      });
     }
   };
 
   // Add refresh function for AI-created notes
   const handleNotesRefresh = () => {
-    if (currentNote) {
-      const fresh = notesStore.findNoteById(currentNote.id);
-      if (fresh) setCurrentNote(fresh);
-    } else {
-      // Force explorer refresh indirectly
-      setCurrentFolderId((prev) => (prev === null ? 0 : null));
-      setTimeout(() => setCurrentFolderId((prev) => (prev === 0 ? null : prev)), 0);
-    }
+    // This will trigger a re-render of NotesExplorer which will fetch fresh data
+    setCurrentNote(null);
+    // Force a refresh by changing the key or triggering a state update
+    // The NotesExplorer useEffect will automatically refetch when currentFolderId changes or on mount
   };
 
   const handleLogout = async () => {
@@ -122,7 +167,7 @@ export default function Dashboard() {
             <div className="flex items-center">
               <button
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="mr-4 p-2 rounded-md text-gray-900 hover:text-black hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+                className="mr-4 p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
               >
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -131,7 +176,7 @@ export default function Dashboard() {
               <h1 className="text-xl font-semibold text-gray-900">Dashboard</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-black">Welcome, {email}</span>
+              <span className="text-gray-700">Welcome, {email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
@@ -153,7 +198,7 @@ export default function Dashboard() {
                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'education'
                     ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 📚 Education
@@ -163,7 +208,7 @@ export default function Dashboard() {
                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'finance'
                     ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 💰 Finance
@@ -173,7 +218,7 @@ export default function Dashboard() {
                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'grocery'
                     ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 🛒 Grocery
@@ -183,7 +228,7 @@ export default function Dashboard() {
                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'volunteer'
                     ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-900 hover:text-black hover:border-gray-300'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 🤝 Volunteer
@@ -194,7 +239,7 @@ export default function Dashboard() {
 
         {/* Tab Content - Full width and height */}
         {activeTab === 'education' && (
-          <div className="flex-1 flex overflow-hidden force-text-black">
+          <div className="flex-1 flex overflow-hidden">
             {/* Notes Explorer Sidebar - Collapsible */}
             <div className={`${isSidebarCollapsed ? 'w-0' : 'w-80'} flex-shrink-0 bg-gray-50 border-r border-gray-200 overflow-hidden transition-all duration-300 ease-in-out`}>
               <div className={`w-80 h-full overflow-y-auto ${isSidebarCollapsed ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}>
@@ -229,19 +274,19 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'finance' && (
-          <div className="flex-1 overflow-hidden force-text-black">
+          <div className="flex-1 overflow-hidden">
             <FinancePage />
           </div>
         )}
         
         {activeTab === 'grocery' && (
-          <div className="flex-1 overflow-hidden force-text-black">
+          <div className="flex-1 overflow-hidden">
             <GroceryPage />
           </div>
         )}
 
         {activeTab === 'volunteer' && (
-          <div className="flex-1 overflow-hidden force-text-black">
+          <div className="flex-1 overflow-hidden">
             <VolunteerTrackerPage />
           </div>
         )}

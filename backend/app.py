@@ -6,18 +6,43 @@ import datetime
 from functools import wraps
 import sqlite3
 import os
+import json
+import google.generativeai as genai
+from supabase import create_client, Client
+import os
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+SUPABASE_URL = "https://pmniwmjnvqrofgmkpkjp.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtbml3bWpudnFyb2ZnbWtwa2pwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU5ODQ1ODIsImV4cCI6MjA3MTU2MDU4Mn0.nNsFtV30WZ8jQebR6uUzwNfEGW4u4FUYrEgYVo_V6kI"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Configuration
 app.config['SECRET_KEY'] = 'your-secret-key-here'  # Change this in production
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
 DATABASE = 'users.db'
+
+# Configure Gemini AI (you'll need to set your API key)
+# Get your free API key from: https://makersuite.google.com/app/apikey
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'your-gemini-api-key-here')
+if GEMINI_API_KEY != 'your-gemini-api-key-here':
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# Create upload directory if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 def init_db():
     """Initialize the database"""
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
+    
+    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +51,48 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Folders table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            parent_id INTEGER,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (parent_id) REFERENCES folders (id)
+        )
+    ''')
+    
+    # Notes table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT,
+            folder_id INTEGER,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (folder_id) REFERENCES folders (id)
+        )
+    ''')
+    
+    # Attachments table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_type TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (note_id) REFERENCES notes (id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -64,86 +131,63 @@ def token_required(f):
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    """User registration endpoint"""
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    password = data.get('password')
+    username = data.get('username') or email.split('@')[0]
+
+    if not email or not password:
+        return jsonify({'error': 'Email and password required'}), 400
+
     try:
-        data = request.get_json()
-        
-        if not data or not data.get('email') or not data.get('password'):
-            return jsonify({'error': 'Email and password are required'}), 400
-        
-        email = data['email'].lower().strip()
-        password = data['password']
-        
-        # Basic email validation
-        if '@' not in email:
-            return jsonify({'error': 'Invalid email format'}), 400
-        
-        # Password length validation
-        if len(password) < 6:
-            return jsonify({'error': 'Password must be at least 6 characters long'}), 400
-        
-        # Hash the password
-        password_hash = hash_password(password)
-        
-        # Save to database
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('INSERT INTO users (email, password_hash) VALUES (?, ?)', 
-                         (email, password_hash))
-            conn.commit()
-            
-            # Generate token for immediate login
+        # Create user in Supabase
+        user_data = supabase.auth.sign_up(
+            {"email": email, "password": password, "options": {"data": {"username": username}}}
+        )
+
+        if user_data.user:
+            # Generate a simple JWT token for compatibility with frontend
             token = generate_token(email)
             
             return jsonify({
-                'message': 'User created successfully',
-                'token': token,
-                'email': email
+                "token": token,
+                "email": email,
+                "message": "User created successfully"
             }), 201
-            
-        except sqlite3.IntegrityError:
-            return jsonify({'error': 'Email already exists'}), 409
-        finally:
-            conn.close()
-            
+        else:
+            return jsonify({'error': 'Failed to create user'}), 500
+
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """User login endpoint"""
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({'error': 'Email and password required'}), 400
+
     try:
-        data = request.get_json()
-        
-        if not data or not data.get('email') or not data.get('password'):
-            return jsonify({'error': 'Email and password are required'}), 400
-        
-        email = data['email'].lower().strip()
-        password = data['password']
-        password_hash = hash_password(password)
-        
-        # Check credentials
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        cursor.execute('SELECT email FROM users WHERE email = ? AND password_hash = ?', 
-                      (email, password_hash))
-        user = cursor.fetchone()
-        conn.close()
-        
-        if user:
-            token = generate_token(email)
-            return jsonify({
-                'message': 'Login successful',
-                'token': token,
-                'email': email
-            }), 200
-        else:
-            return jsonify({'error': 'Invalid email or password'}), 401
-            
+        session = supabase.auth.sign_in_with_password({"email": email, "password": password})
+
+        if not session.user:
+            return jsonify({'error': 'Invalid credentials'}), 401
+
+        # Generate a simple JWT token for compatibility with frontend
+        token = generate_token(email)
+
+        return jsonify({
+            "token": token,
+            "email": email,
+            "message": "Login successful"
+        }), 200
+
     except Exception as e:
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/logout', methods=['POST'])
 @token_required
@@ -165,6 +209,454 @@ def get_profile(current_user_email):
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'message': 'API is running'}), 200
+
+# Notes and Folders API Endpoints
+
+@app.route('/api/folders', methods=['GET'])
+@token_required
+def get_folders(current_user_email):
+    """Get all folders for the current user"""
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Get user ID
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user[0]
+        
+        # Get folders
+        cursor.execute('''
+            SELECT id, name, parent_id, created_at 
+            FROM folders 
+            WHERE user_id = ? 
+            ORDER BY created_at ASC
+        ''', (user_id,))
+        
+        folders = []
+        for row in cursor.fetchall():
+            folders.append({
+                'id': row[0],
+                'name': row[1],
+                'parent_id': row[2],
+                'created_at': row[3]
+            })
+        
+        conn.close()
+        return jsonify({'folders': folders}), 200
+        
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/folders', methods=['POST'])
+@token_required
+def create_folder(current_user_email):
+    """Create a new folder"""
+    try:
+        data = request.get_json()
+        if not data or not data.get('name'):
+            return jsonify({'error': 'Folder name is required'}), 400
+        
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Get user ID
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user[0]
+        
+        # Create folder
+        cursor.execute('''
+            INSERT INTO folders (name, parent_id, user_id) 
+            VALUES (?, ?, ?)
+        ''', (data['name'], data.get('parent_id'), user_id))
+        
+        folder_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'message': 'Folder created successfully',
+            'folder_id': folder_id
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/notes', methods=['GET'])
+@token_required
+def get_notes(current_user_email):
+    """Get all notes for the current user"""
+    try:
+        folder_id = request.args.get('folder_id')
+        
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Get user ID
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user[0]
+        
+        # Get notes
+        if folder_id:
+            cursor.execute('''
+                SELECT id, title, content, folder_id, created_at, updated_at 
+                FROM notes 
+                WHERE user_id = ? AND folder_id = ?
+                ORDER BY updated_at DESC
+            ''', (user_id, folder_id))
+        else:
+            cursor.execute('''
+                SELECT id, title, content, folder_id, created_at, updated_at 
+                FROM notes 
+                WHERE user_id = ? AND folder_id IS NULL
+                ORDER BY updated_at DESC
+            ''', (user_id,))
+        
+        notes = []
+        for row in cursor.fetchall():
+            notes.append({
+                'id': row[0],
+                'title': row[1],
+                'content': row[2],
+                'folder_id': row[3],
+                'created_at': row[4],
+                'updated_at': row[5]
+            })
+        
+        conn.close()
+        return jsonify({'notes': notes}), 200
+        
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/notes', methods=['POST'])
+@token_required
+def create_note(current_user_email):
+    """Create a new note"""
+    try:
+        data = request.get_json()
+        if not data or not data.get('title'):
+            return jsonify({'error': 'Note title is required'}), 400
+        
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Get user ID
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user[0]
+        
+        # Create note
+        cursor.execute('''
+            INSERT INTO notes (title, content, folder_id, user_id) 
+            VALUES (?, ?, ?, ?)
+        ''', (data['title'], data.get('content', ''), data.get('folder_id'), user_id))
+        
+        note_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'message': 'Note created successfully',
+            'note_id': note_id
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/notes/<int:note_id>', methods=['PUT'])
+@token_required
+def update_note(current_user_email, note_id):
+    """Update a note"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Get user ID
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user[0]
+        
+        # Update note
+        cursor.execute('''
+            UPDATE notes 
+            SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        ''', (data.get('title'), data.get('content'), note_id, user_id))
+        
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Note not found or access denied'}), 404
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Note updated successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/ai/chat', methods=['POST'])
+@token_required
+def ai_chat(current_user_email):
+    """Chat with AI about notes"""
+    try:
+        if GEMINI_API_KEY == 'your-gemini-api-key-here':
+            return jsonify({'error': 'Gemini API key not configured'}), 503
+            
+        data = request.get_json()
+        if not data or not data.get('message'):
+            return jsonify({'error': 'Message is required'}), 400
+        
+        # Get user ID
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user_result[0]
+        
+        # Get all user's notes and folders for context
+        cursor.execute('''
+            SELECT n.id, n.title, n.content, n.folder_id, f.name as folder_name
+            FROM notes n
+            LEFT JOIN folders f ON n.folder_id = f.id
+            WHERE n.user_id = ?
+            ORDER BY n.updated_at DESC
+        ''', (user_id,))
+        all_notes = cursor.fetchall()
+        
+        cursor.execute('SELECT id, name, parent_id FROM folders WHERE user_id = ?', (user_id,))
+        all_folders = cursor.fetchall()
+        conn.close()
+        
+        # Initialize Gemini model
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Prepare comprehensive context
+        user_message = data['message']
+        current_note_context = data.get('context', '')
+        current_note_id = data.get('note_id', None)
+        
+        # Format all notes for AI context
+        notes_context = "All User's Notes:\n"
+        for note in all_notes:
+            note_id, title, content, folder_id, folder_name = note
+            folder_info = f" (in folder: {folder_name})" if folder_name else " (in root)"
+            notes_context += f"\n--- Note ID: {note_id} ---\nTitle: {title}{folder_info}\nContent: {content[:500]}{'...' if len(content) > 500 else ''}\n"
+        
+        # Format folders for AI context
+        folders_context = "\nUser's Folders:\n"
+        for folder in all_folders:
+            folder_id, name, parent_id = folder
+            parent_info = f" (parent: {parent_id})" if parent_id else " (root level)"
+            folders_context += f"Folder ID: {folder_id}, Name: {name}{parent_info}\n"
+        
+        # Create comprehensive prompt
+        prompt = f"""
+        You are an advanced AI assistant for a note-taking application with full note management capabilities.
+        
+        CURRENT USER: {current_user_email}
+        
+        AVAILABLE ACTIONS:
+        1. READ: You can see all user's notes and folders
+        2. CREATE: Create new notes with rich formatting
+        3. EDIT: Modify existing notes
+        4. FORMAT: Use HTML formatting, LaTeX math, diagrams
+        5. ORGANIZE: Suggest folder organization
+        
+        FORMATTING CAPABILITIES:
+        - HTML tags: <b>, <i>, <u>, <h1>-<h6>, <p>, <ul>, <ol>, <li>
+        - LaTeX math: Use $inline math$ or $$display math$$
+        - Font sizes: <span style="font-size: 12px;">text</span>
+        - Colors: <span style="color: red;">text</span>
+        - Diagrams: ASCII art, flowcharts, or suggest drawing mode
+        
+        USER'S CURRENT CONTEXT:
+        {notes_context}
+        
+        {folders_context}
+        
+        CURRENT NOTE CONTEXT: {current_note_context if current_note_context else "No specific note selected"}
+        CURRENT NOTE ID: {current_note_id if current_note_id else "None"}
+        
+        USER MESSAGE: {user_message}
+        
+        INSTRUCTIONS:
+        - If user asks to create/edit notes, provide the formatted content
+        - Use LaTeX for any mathematical expressions
+        - Suggest specific actions like "CREATE_NOTE", "EDIT_NOTE", "ORGANIZE_FOLDERS"
+        - Be proactive in improving and organizing their notes
+        - Create diagrams using ASCII art when helpful
+        - Use rich HTML formatting for better readability
+        
+        Respond helpfully and take action on their notes when appropriate.
+        """
+        
+        # Generate response
+        response = model.generate_content(prompt)
+        
+        # Parse AI response for actions
+        ai_response = response.text
+        actions = []
+        
+        # Check if AI wants to create or edit notes
+        if "CREATE_NOTE:" in ai_response:
+            # Extract note creation instructions
+            pass
+        elif "EDIT_NOTE:" in ai_response:
+            # Extract note editing instructions
+            pass
+        
+        return jsonify({
+            'response': ai_response,
+            'actions': actions,
+            'message': 'AI response with full note access generated successfully'
+        }), 200
+        
+    except Exception as e:
+        error_str = str(e)
+        
+        # Check if it's a quota/rate limit error
+        if "429" in error_str or "RATE_LIMIT_EXCEEDED" in error_str or "Quota exceeded" in error_str:
+            # Provide helpful fallback responses based on common queries
+            user_message = data.get('message', '').lower()
+            
+            # Generate contextual fallback responses with note management
+            if any(word in user_message for word in ['create', 'new note', 'make']):
+                fallback_response = "I'd love to help you create a new note! I can format it with:\n\n• **Rich text formatting** (bold, italic, headers)\n• LaTeX math expressions like $x^2 + y^2 = r^2$\n• Organized structure with bullet points\n• Proper headings and sections\n\nWhat topic would you like me to create a note about?"
+            elif any(word in user_message for word in ['edit', 'modify', 'change']):
+                fallback_response = "I can help edit your notes with advanced formatting:\n\n• Add **mathematical equations** using LaTeX\n• Improve structure with headers and lists\n• Add diagrams and visual elements\n• Organize content by topics\n\nWhich note would you like me to enhance?"
+            elif any(word in user_message for word in ['math', 'equation', 'formula']):
+                fallback_response = "I can add mathematical content to your notes using LaTeX:\n\n• Inline math: $E = mc^2$\n• Display equations: $$\\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}$$\n• Complex formulas with proper formatting\n• Chemical equations and scientific notation\n\nWhat mathematical content would you like me to add?"
+            elif any(word in user_message for word in ['diagram', 'chart', 'visual']):
+                fallback_response = "I can create diagrams and visual elements:\n\n```\n    ┌─────────┐\n    │ Process │\n    └─────────┘\n         │\n         ▼\n    ┌─────────┐\n    │ Result  │\n    └─────────┘\n```\n\nI can also suggest using the drawing mode for complex diagrams. What type of diagram do you need?"
+            else:
+                fallback_response = f"I'm experiencing high demand but I can still help you manage your notes! I can:\n\n• **Create new notes** with rich formatting\n• **Edit existing notes** with LaTeX math\n• **Organize your content** with proper structure\n• **Add diagrams** and visual elements\n• **Format text** with various styles and sizes\n\nWhat would you like me to help you with? '{user_message[:50]}...' sounds interesting!"
+            
+            return jsonify({
+                'response': fallback_response + "\n\n💡 **Note**: I'm currently experiencing high demand. For full AI assistance, try again in a few minutes.",
+                'actions': [],
+                'message': 'Fallback response with note management features'
+            }), 200
+        else:
+            return jsonify({'error': f'AI service error: {str(e)}'}), 500
+
+# New endpoint for AI to create notes
+@app.route('/api/ai/create-note', methods=['POST'])
+@token_required
+def ai_create_note(current_user_email):
+    """Allow AI to create notes"""
+    try:
+        # Get user ID
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user_result[0]
+        
+        data = request.get_json()
+        title = data.get('title', 'AI Generated Note')
+        content = data.get('content', '')
+        folder_id = data.get('folder_id', None)
+        
+        cursor.execute('''
+            INSERT INTO notes (title, content, folder_id, user_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''', (title, content, folder_id, user_id))
+        
+        note_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'note_id': note_id,
+            'title': title,
+            'content': content,
+            'folder_id': folder_id,
+            'message': 'Note created successfully by AI'
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'error': 'Failed to create note'}), 500
+
+# New endpoint for AI to edit notes
+@app.route('/api/ai/edit-note/<int:note_id>', methods=['PUT'])
+@token_required
+def ai_edit_note(current_user_email, note_id):
+    """Allow AI to edit notes"""
+    try:
+        # Get user ID
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM users WHERE email = ?', (current_user_email,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+        user_id = user_result[0]
+        
+        # Check if note belongs to user
+        cursor.execute('SELECT id, title, content FROM notes WHERE id = ? AND user_id = ?', (note_id, user_id))
+        note = cursor.fetchone()
+        if not note:
+            conn.close()
+            return jsonify({'error': 'Note not found'}), 404
+        
+        data = request.get_json()
+        new_title = data.get('title')
+        new_content = data.get('content')
+        
+        # Update note
+        if new_title and new_content:
+            cursor.execute('''
+                UPDATE notes 
+                SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ''', (new_title, new_content, note_id, user_id))
+        elif new_content:
+            cursor.execute('''
+                UPDATE notes 
+                SET content = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ''', (new_content, note_id, user_id))
+        elif new_title:
+            cursor.execute('''
+                UPDATE notes 
+                SET title = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ''', (new_title, note_id, user_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'note_id': note_id,
+            'message': 'Note updated successfully by AI'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': 'Failed to update note'}), 500
 
 if __name__ == '__main__':
     # Initialize database on startup

@@ -1,0 +1,192 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { notesStore, type Note } from '@/lib/notesStore';
+
+interface SimpleNotesExplorerProps {
+  onSelectNote: (note: Note) => void;
+  onSelectFolder: (folderId: number | null) => void;
+  currentFolderId: number | null;
+}
+
+export default function SimpleNotesExplorer({ onSelectNote, onSelectFolder, currentFolderId }: SimpleNotesExplorerProps) {
+  const [, setTick] = useState(0);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newNoteTitle, setNewNoteTitle] = useState('');
+
+  useEffect(() => {
+    const unsub = notesStore.subscribe(() => setTick((t) => t + 1));
+    return () => unsub();
+  }, []);
+
+  const folders = notesStore.listFolders();
+  const notes = notesStore.getAllNotes();
+
+  const tree = useMemo(() => {
+    const byParent: Record<string, number[]> = {};
+    for (const f of folders) {
+      const key = String(f.parent_id ?? 'root');
+      byParent[key] = byParent[key] || [];
+      byParent[key].push(f.id);
+    }
+    return byParent;
+  }, [folders]);
+
+  const currentNotes = notes.filter((n) => n.folder_id === (currentFolderId ?? null));
+
+  function handleCreateFolder(parent_id: number | null) {
+    if (!newFolderName.trim()) return;
+    const f = notesStore.createFolder(newFolderName.trim(), parent_id);
+    setNewFolderName('');
+    onSelectFolder(f.id);
+  }
+
+  function handleCreateNote(folder_id: number | null) {
+    if (!newNoteTitle.trim()) return;
+    const n = notesStore.createNote(newNoteTitle.trim(), '', folder_id);
+    setNewNoteTitle('');
+    onSelectNote(n);
+  }
+
+  function handleDeleteFolder(id: number) {
+    notesStore.deleteFolder(id);
+    if (currentFolderId === id) onSelectFolder(null);
+  }
+
+  function handleDeleteNote(id: number) {
+    notesStore.deleteNote(id);
+    if (id === (currentFolderId ?? -1)) onSelectFolder(null);
+  }
+
+  function onDragStartFolder(e: React.DragEvent, folderId: number) {
+    e.dataTransfer.setData('type', 'folder');
+    e.dataTransfer.setData('id', String(folderId));
+  }
+  function onDragStartNote(e: React.DragEvent, noteId: number) {
+    e.dataTransfer.setData('type', 'note');
+    e.dataTransfer.setData('id', String(noteId));
+  }
+  function onDropToFolder(e: React.DragEvent, folderId: number | null) {
+    e.preventDefault();
+    const type = e.dataTransfer.getData('type');
+    const id = Number(e.dataTransfer.getData('id'));
+    if (type === 'note') {
+      notesStore.moveNote(id, folderId);
+    } else if (type === 'folder' && folderId !== null) {
+      notesStore.moveFolder(id, folderId);
+    } else if (type === 'folder' && folderId === null) {
+      notesStore.moveFolder(id, null);
+    }
+  }
+  function onDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+
+  function FolderNode({ id, depth }: { id: number; depth: number }) {
+    const folder = folders.find((f) => f.id === id)!;
+    const childFolders = tree[String(id)] || [];
+    const isActive = currentFolderId === id;
+    return (
+      <div className="ml-2">
+        <div
+          className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer ${
+            isActive ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-gray-100'
+          }`}
+          draggable
+          onDragStart={(e) => onDragStartFolder(e, id)}
+          onClick={() => onSelectFolder(id)}
+          onDrop={(e) => onDropToFolder(e, id)}
+          onDragOver={onDragOver}
+        >
+          <div className="flex items-center gap-2">
+            <span>📁</span>
+            <span className="truncate" title={folder.name}>{folder.name}</span>
+          </div>
+          <button
+            className="text-xs text-red-500 hover:text-red-700"
+            onClick={(e) => { e.stopPropagation(); handleDeleteFolder(id); }}
+            title="Delete folder"
+          >
+            Delete
+          </button>
+        </div>
+        {childFolders.length > 0 && (
+          <div className="ml-4 border-l border-gray-200 pl-2">
+            {childFolders.map((cid) => (
+              <FolderNode key={cid} id={cid} depth={depth + 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-3 border-b bg-white sticky top-0 z-10">
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border rounded px-2 py-1 text-sm text-black"
+              placeholder="New folder name"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+            />
+            <button
+              className="px-2 py-1 text-sm bg-indigo-600 text-white rounded"
+              onClick={() => handleCreateFolder(currentFolderId ?? null)}
+            >
+              + Folder
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border rounded px-2 py-1 text-sm text-black"
+              placeholder="New note title"
+              value={newNoteTitle}
+              onChange={(e) => setNewNoteTitle(e.target.value)}
+            />
+            <button
+              className="px-2 py-1 text-sm bg-green-600 text-white rounded"
+              onClick={() => handleCreateNote(currentFolderId ?? null)}
+            >
+              + Note
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-3 overflow-y-auto notes-explorer flex-1" onDrop={(e) => onDropToFolder(e, null)} onDragOver={onDragOver}>
+        <div className="text-xs text-gray-500 mb-2">Folders</div>
+        {(tree['root'] || []).map((id) => (
+          <FolderNode key={id} id={id} depth={0} />
+        ))}
+
+        <div className="mt-4 text-xs text-gray-500">Notes in {currentFolderId ? 'folder' : 'root'}</div>
+        <ul className="space-y-1">
+          {currentNotes.map((n) => (
+            <li
+              key={n.id}
+              className="flex items-center justify-between px-2 py-1 rounded hover:bg-gray-100 cursor-pointer"
+              onClick={() => onSelectNote(n)}
+              draggable
+              onDragStart={(e) => onDragStartNote(e, n.id)}
+            >
+              <div className="truncate" title={n.title}>📝 {n.title}</div>
+              <button
+                className="text-xs text-red-500 hover:text-red-700"
+                onClick={(e) => { e.stopPropagation(); handleDeleteNote(n.id); }}
+                title="Delete note"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+          {currentNotes.length === 0 && (
+            <li className="text-sm text-gray-500 italic px-2 py-1">No notes yet</li>
+          )}
+        </ul>
+      </div>
+    </div>
+  );
+}

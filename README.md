@@ -1,14 +1,17 @@
 # Authentication App - Next.js + Flask
 
-A full-stack authentication application with Next.js frontend and Flask backend.
+A full-stack authentication application with Next.js frontend and Flask backend, featuring a comprehensive notes system with AI integration.
 
 ## Features
 
-- User registration and login
-- JWT-based authentication
-- Protected routes
-- Responsive design with Tailwind CSS
-- RESTful API endpoints
+- **Authentication**: User registration and login with JWT tokens
+- **Notes System**: Hierarchical folder/note organization
+- **Rich Text Editing**: Google Docs-like editor with formatting
+- **Drawing Mode**: Canvas-based drawing for tablets/stylus
+- **LaTeX Math**: Mathematical equation support
+- **AI Assistant**: Google Gemini-powered chatbot for note analysis
+- **File Attachments**: Image and file upload support
+- **Responsive Design**: Works on desktop and mobile devices
 
 ## Project Structure
 
@@ -36,23 +39,25 @@ A full-stack authentication application with Next.js frontend and Flask backend.
    cd backend
    ```
 
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
+
+3. **Set up Gemini AI (Optional but recommended)**:
+   - Get a free API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Set the environment variable:
+     ```bash
+     export GEMINI_API_KEY="your-api-key-here"
+     ```
+   - Or edit `app.py` and replace `'your-gemini-api-key-here'` with your actual key
 
 4. Run the Flask server:
    ```bash
    python app.py
    ```
 
-The backend will be available at `http://localhost:5000`
+The backend will be available at `http://localhost:5001`
 
 ### Frontend Setup
 
@@ -63,7 +68,7 @@ The backend will be available at `http://localhost:5000`
 
 2. Install dependencies:
    ```bash
-   npm install
+   npm install --legacy-peer-deps
    ```
 
 3. Run the development server:
@@ -71,7 +76,7 @@ The backend will be available at `http://localhost:5000`
    npm run dev
    ```
 
-The frontend will be available at `http://localhost:3000`
+The frontend will be available at `http://localhost:3000` or `http://localhost:3001`
 
 ## API Endpoints
 
@@ -80,8 +85,15 @@ The frontend will be available at `http://localhost:3000`
 - `POST /api/login` - Login user
 - `POST /api/logout` - Logout user (requires token)
 
-### Protected Routes
-- `GET /api/profile` - Get user profile (requires token)
+### Notes System
+- `GET /api/folders` - Get all folders for user
+- `POST /api/folders` - Create a new folder
+- `GET /api/notes` - Get notes (optional folder_id parameter)
+- `POST /api/notes` - Create a new note
+- `PUT /api/notes/<id>` - Update a note
+
+### AI Integration
+- `POST /api/ai/chat` - Chat with AI about notes
 
 ### Utility
 - `GET /api/health` - Health check

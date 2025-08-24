@@ -5,12 +5,7 @@
   --foreground: #171717;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* Removed @theme inline (not supported by current tooling). Use CSS variables directly. */
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -23,4 +18,198 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom scrollbar styles for better UX */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #9CA3AF #F3F4F6;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: #F3F4F6;
+  border-radius: 6px;
+  border: 1px solid #E5E7EB;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #9CA3AF;
+  border-radius: 6px;
+  border: 2px solid #F3F4F6;
+  transition: background-color 0.2s ease;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #6B7280;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:active {
+  background: #4B5563;
+}
+
+.scrollbar-thin::-webkit-scrollbar-corner {
+  background: #F3F4F6;
+  border-radius: 6px;
+}
+
+/* Enhanced text editor specific scrollbar styling */
+.text-editor-scrollable {
+  /* Ensure proper scrolling behavior */
+  overflow: auto !important;
+  -webkit-overflow-scrolling: touch;
+  /* Force scrollbars to always be visible for better UX */
+  scrollbar-gutter: stable;
+}
+
+/* Enhanced scrollbar for text editor specifically */
+.text-editor-scrollable::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.text-editor-scrollable::-webkit-scrollbar-track {
+  background: #F9FAFB;
+  border-radius: 7px;
+  border: 1px solid #E5E7EB;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.text-editor-scrollable::-webkit-scrollbar-thumb {
+  background: linear-gradient(45deg, #9CA3AF, #6B7280);
+  border-radius: 7px;
+  border: 2px solid #F9FAFB;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.text-editor-scrollable::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(45deg, #6B7280, #4B5563);
+  transform: scale(1.05);
+}
+
+.text-editor-scrollable::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(45deg, #4B5563, #374151);
+}
+
+.text-editor-scrollable::-webkit-scrollbar-corner {
+  background: #F9FAFB;
+  border-radius: 7px;
+}
+
+/* Placeholder styling for contentEditable */
+.text-editor-scrollable:empty:before {
+  content: attr(data-placeholder);
+  color: #9CA3AF;
+  font-style: italic;
+  pointer-events: none;
+}
+
+/* Ensure long lines can trigger horizontal scrolling */
+.text-editor-scrollable {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Force minimum content width to test horizontal scrolling */
+.text-editor-scrollable * {
+  max-width: none;
+}
+
+/* Enhanced scrollbar visibility */
+.text-editor-scrollable::-webkit-scrollbar-track:horizontal {
+  background: #F3F4F6;
+}
+
+.text-editor-scrollable::-webkit-scrollbar-track:vertical {
+  background: #F9FAFB;
+}
+
+/* Force text to black within specific sections without affecting explicit text-white buttons */
+.force-text-black :where(p, span, li, h1, h2, h3, h4, h5, h6, label, small) {
+  color: #000 !important;
+}
+
+/* GraphRenderer Styles */
+.graph-renderer-wrapper {
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  background: #f8f9fa;
+  overflow-x: auto;
+}
+
+.graph-renderer {
+  width: 100%;
+  min-height: 200px;
+}
+
+.graph-container {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+}
+
+.graph-renderer-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.loading-spinner {
+  font-size: 2rem;
+  margin-bottom: 10px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.graph-renderer-error {
+  padding: 20px;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 8px;
+  color: #c33;
+}
+
+.error-icon {
+  font-size: 2rem;
+  margin-bottom: 10px;
+}
+
+.graph-renderer-error h4 {
+  margin: 0 0 10px 0;
+  color: #c33;
+}
+
+.graph-renderer-error details {
+  margin-top: 15px;
+}
+
+.graph-renderer-error summary {
+  cursor: pointer;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.graph-renderer-error pre {
+  background: #f5f5f5;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 12px;
 }

@@ -1,93 +1,146 @@
-import Image from "next/image";
-import Link from "next/link";
+'use client';
 
-export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Welcome to your authentication app with{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              Next.js & Flask
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Sign up or log in to get started.
-          </li>
-        </ol>
+import React, { useState, useEffect } from 'react';
+import { AuthService, AuthUser } from '@/lib/auth';
+import Login from '@/components/Login';
+import SignUp from '@/components/SignUp';
+import { LogOut, User, MessageCircle } from 'lucide-react';
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <Link
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="/login"
-          >
-            Login
-          </Link>
-          <Link
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto"
-            href="/signup"
-          >
-            Sign Up
-          </Link>
+type AuthView = 'login' | 'signup';
+
+const HomePage = () => {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authView, setAuthView] = useState<AuthView>('login');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check for existing session
+    const checkSession = async () => {
+      try {
+        const { user } = await AuthService.getCurrentUser();
+        setUser(user);
+      } catch (error) {
+        console.error('Session check error:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkSession();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = AuthService.onAuthStateChange((user) => {
+      setUser(user);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleAuthSuccess = (user: AuthUser) => {
+    setUser(user);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await AuthService.signOut();
+      setUser(null);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  // Loading screen
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <MessageCircle className="mx-auto h-12 w-12 text-blue-500 mb-4 animate-spin" />
+          <p className="text-white">Loading...</p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+    );
+  }
+
+  // Show auth forms if not logged in
+  if (!user) {
+    if (authView === 'login') {
+      return (
+        <Login 
+          onSuccess={handleAuthSuccess}
+          onSwitchToSignUp={() => setAuthView('signup')}
+        />
+      );
+    } else {
+      return (
+        <SignUp 
+          onSuccess={handleAuthSuccess}
+          onSwitchToLogin={() => setAuthView('login')}
+        />
+      );
+    }
+  }
+
+  // Dashboard for authenticated users
+  return (
+    <div className="min-h-screen bg-gray-900">
+      {/* Header */}
+      <div className="bg-gray-800 border-b border-gray-700">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <MessageCircle className="h-8 w-8 text-blue-500" />
+            <h1 className="text-xl font-bold text-white">Chat App</h1>
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 text-gray-300">
+              <User size={18} />
+              <span>{user.username || user.email}</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center space-x-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition duration-200"
+            >
+              <LogOut size={16} />
+              <span>Logout</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="bg-gray-800 rounded-lg p-8 text-center">
+          <MessageCircle className="mx-auto h-16 w-16 text-blue-500 mb-6" />
+          <h2 className="text-2xl font-bold text-white mb-4">Welcome to Chat App!</h2>
+          <p className="text-gray-400 mb-6">
+            You're successfully logged in as <span className="text-blue-400">{user.username}</span>
+          </p>
+          
+          <div className="bg-gray-700 rounded-lg p-6 max-w-md mx-auto">
+            <h3 className="text-lg font-semibold text-white mb-3">User Information</h3>
+            <div className="space-y-2 text-left">
+              <div className="flex justify-between">
+                <span className="text-gray-400">ID:</span>
+                <span className="text-white text-sm font-mono">{user.id.substring(0, 8)}...</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Email:</span>
+                <span className="text-white">{user.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Username:</span>
+                <span className="text-white">{user.username}</span>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-gray-500 mt-6 text-sm">
+            This is where your chat interface would go. The authentication system is now ready!
+          </p>
+        </div>
+      </div>
     </div>
   );
-}
+};
+
+export default HomePage;
