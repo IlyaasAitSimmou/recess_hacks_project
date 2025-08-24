@@ -12,6 +12,7 @@ A full-stack authentication application with Next.js frontend and Flask backend,
 - **AI Assistant**: Google Gemini-powered chatbot for note analysis
 - **File Attachments**: Image and file upload support
 - **Responsive Design**: Works on desktop and mobile devices
+<img width="770" height="804" alt="Screenshot 2025-08-24 184908" src="https://github.com/user-attachments/assets/2f142ae7-380e-4bdc-be62-11587175f6b2" />
 
 ## Project Structure
 
